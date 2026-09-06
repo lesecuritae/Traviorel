@@ -1,7 +1,7 @@
 from __future__ import annotations
 import os, secrets
 from pathlib import Path
-TOKEN_FILE = Path(os.environ.get("DB_CFFI_TOKEN_FILE", "/run/fareweave-secrets/db_cffi_token"))
+TOKEN_FILE = Path(os.environ.get("DB_CFFI_TOKEN_FILE", "/run/traviorel-secrets/db_cffi_token"))
 def write_token(token: str) -> None:
     TOKEN_FILE.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
     os.chmod(TOKEN_FILE.parent, 0o755)

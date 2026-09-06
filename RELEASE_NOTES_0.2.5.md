@@ -1,6 +1,6 @@
-# FareWeave 0.2.5 – Smart Location Resolution Fix
+# Traviorel 0.2.5 – Smart Location Resolution Fix
 
-FareWeave 0.2.5 entfernt feste Stationszuweisungen aus der Ortsauflösung und macht wichtige Reiseentscheidungen direkt sichtbar.
+Traviorel 0.2.5 entfernt feste Stationszuweisungen aus der Ortsauflösung und macht wichtige Reiseentscheidungen direkt sichtbar.
 
 ## Orts- und Stationsauflösung
 

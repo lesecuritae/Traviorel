@@ -49,11 +49,11 @@ def _load() -> tuple[bytes, int, int, int, int]:
         return _dataset
     payload = _DATA_RESOURCE.read_bytes()
     if payload[:8] != _MAGIC or len(payload) < _HEADER_SIZE:
-        raise ValueError("invalid FareWeave coverage dataset")
+        raise ValueError("invalid Traviorel coverage dataset")
     min_north, max_north, min_east, max_east = struct.unpack_from("<4I", payload, 8)
     cells = (max_north - min_north + 1) * (max_east - min_east + 1)
     if len(payload) != _HEADER_SIZE + (cells + 1) // 2:
-        raise ValueError("FareWeave coverage dataset size does not match its header")
+        raise ValueError("Traviorel coverage dataset size does not match its header")
     _dataset = payload, min_north, max_north, min_east, max_east
     return _dataset
 

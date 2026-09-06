@@ -1,0 +1,17 @@
+services:
+
+  ts-traviorel:
+    image: tailscale/tailscale:latest
+    container_name: ts-traviorel
+    environment:
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_EXTRA_ARGS=--accept-dns=false --hostname=traviorel
+    volumes:
+      - traviorel-tailscale:/var/lib/tailscale
+    network_mode: service:app
+    restart: unless-stopped
+
+volumes:
+
+  traviorel-tailscale:
+    name: traviorel-tailscale

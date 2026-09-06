@@ -15,7 +15,7 @@ def _env_bool(name: str, default: bool) -> bool:
 APP_VERSION = "0.3.0"
 DB_API_URL = os.getenv("DB_API_URL", "http://db-api:3001").rstrip("/")
 TRANSITOUS_URL = os.getenv("TRANSITOUS_URL", "https://api.transitous.org").rstrip("/")
-TRANSITOUS_USER_AGENT = os.getenv("TRANSITOUS_USER_AGENT", "fareweave/0.3.0")
+TRANSITOUS_USER_AGENT = os.getenv("TRANSITOUS_USER_AGENT", "traviorel/0.3.0")
 NINA_API_URL = os.getenv("NINA_API_URL", "https://warnung.bund.de/api31").rstrip("/")
 NINA_TIMEOUT = min(max(float(os.getenv("NINA_TIMEOUT", "12")), 3.0), 30.0)
 NINA_CACHE_TTL = min(max(int(os.getenv("NINA_CACHE_TTL", "300")), 60), 1800)

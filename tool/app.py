@@ -26,7 +26,7 @@ async def lifespan(_app: FastAPI):
         await stop_scheduler(scheduler)
 
 app = FastAPI(
-    title="FareWeave",
+    title="Traviorel",
     version=APP_VERSION,
     description=(
         "Deterministischer multimodaler Reisevergleich mit DB/db-vendo, Split-Ticket-Prüfung, "

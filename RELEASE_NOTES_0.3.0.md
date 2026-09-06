@@ -1,6 +1,6 @@
-# FareWeave 0.3.0 – NINA/BBK-Warnungen entlang der Reise
+# Traviorel 0.3.0 – NINA/BBK-Warnungen entlang der Reise
 
-FareWeave zeigt nach einer erfolgreichen Routensuche aktuelle amtliche Warnungen an, die geografisch zur Reise passen.
+Traviorel zeigt nach einer erfolgreichen Routensuche aktuelle amtliche Warnungen an, die geografisch zur Reise passen.
 
 ## Neu
 
@@ -12,7 +12,7 @@ FareWeave zeigt nach einer erfolgreichen Routensuche aktuelle amtliche Warnungen
 ## Sicher und additiv
 
 - Keine Änderung oder automatische Umplanung von Verbindungen
-- Flughafenwarnungen sind reine Ortsinformationen; FareWeave leitet daraus keine Ausfälle einzelner Bahn-, Bus- oder Flugverbindungen ab
+- Flughafenwarnungen sind reine Ortsinformationen; Traviorel leitet daraus keine Ausfälle einzelner Bahn-, Bus- oder Flugverbindungen ab
 - Kein Einfluss auf DB, FlixTrain, GTFS, Transitous, ÖPNV, Ranking oder Preise
 - Separater Nachladepfad: Ein NINA-Ausfall beeinträchtigt die Reiseausgabe nicht
 - Fünf Minuten Cache und begrenzte Parallelität vermeiden unnötige API-Aufrufe

@@ -1,6 +1,6 @@
-# FareWeave 0.2.2
+# Traviorel 0.2.2
 
-FareWeave 0.2.2 stabilisiert die providerübergreifende Stationszuordnung und aktiviert die bereits vorhandene OpenCellID-Offline-Pipeline für betreiberbezogene Mobilfunkwerte.
+Traviorel 0.2.2 stabilisiert die providerübergreifende Stationszuordnung und aktiviert die bereits vorhandene OpenCellID-Offline-Pipeline für betreiberbezogene Mobilfunkwerte.
 
 ## Änderungen
 
@@ -12,7 +12,7 @@ FareWeave 0.2.2 stabilisiert die providerübergreifende Stationszuordnung und ak
 
 ## Betrieb
 
-Der Offline-Datenbestand ist aufgrund Größe und CC-BY-SA-4.0-Lizenz nicht Bestandteil der Images. Er wird über `OPENCELLID_CSV_PATH` aus dem persistenten FareWeave-State eingebunden. Ein API-Key ist nicht erforderlich und wird für den produktiven Offline-Betrieb nicht gesetzt.
+Der Offline-Datenbestand ist aufgrund Größe und CC-BY-SA-4.0-Lizenz nicht Bestandteil der Images. Er wird über `OPENCELLID_CSV_PATH` aus dem persistenten Traviorel-State eingebunden. Ein API-Key ist nicht erforderlich und wird für den produktiven Offline-Betrieb nicht gesetzt.
 
 ## Validierung
 

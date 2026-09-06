@@ -2,7 +2,7 @@
 ## 0.3.0 - 2026-08-29
 
 - Aktuelle amtliche NINA-/BBK-Warnungen werden nach einer erfolgreichen Reise separat und ohne Einfluss auf Routing, Ranking oder Preise geladen.
-- FareWeave ordnet Warnungen anhand ihrer amtlichen GeoJSON-Flächen den vorhandenen Koordinaten von Start, Ziel und wichtigen Zwischenhalten zu.
+- Traviorel ordnet Warnungen anhand ihrer amtlichen GeoJSON-Flächen den vorhandenen Koordinaten von Start, Ziel und wichtigen Zwischenhalten zu.
 - Unspezifische deutschlandweite Warnflächen werden nicht als reisebezogene Meldung angezeigt.
 - Die Oberfläche zeigt relevante Warnungen mit Symbol, Titel, Kurzbeschreibung, Region, betroffenen Halten und Quelle; bei keiner Warnung oder einem API-Ausfall bleibt sie unverändert.
 - Bei Flugabschnitten werden trvl-IATA-Codes gezielt über den vorhandenen Haltestellenresolver geografisch aufgelöst, damit ortsbezogene Warnungen an deutschen Flughäfen ebenfalls erfasst werden.
@@ -28,7 +28,7 @@
 
 ## 0.2.6 - 2026-08-24
 
-- Das Suchformular bietet direkt sichtbare, providerneutrale Auswahlen für Zug und Bus. FareWeave ordnet DB, Transitous, FlixTrain und FlixBus weiterhin intern zu.
+- Das Suchformular bietet direkt sichtbare, providerneutrale Auswahlen für Zug und Bus. Traviorel ordnet DB, Transitous, FlixTrain und FlixBus weiterhin intern zu.
 - Zug-only, Bus-only und die kombinierte Suche filtern die tatsächlich sichtbaren Verbindungen; mindestens ein Verkehrsmittel bleibt ausgewählt.
 - Die Split-Ticket-Prüfung bleibt als kleiner Haken direkt unter der Verkehrsmittelauswahl sichtbar und wird ohne ausgewählte Zugreise deaktiviert.
 - Technische Providernamen wurden aus Suchfortschritt und Leerzuständen entfernt. Erfolgreiche Prüfungen ohne Treffer bleiben von technischen Abruffehlern getrennt.
@@ -133,7 +133,7 @@
 ## 0.0.3 - 2026-08-14
 
 - Direkte Docker-/Compose-Installationen benötigen keinen manuell gesetzten `DB_CFFI_TOKEN` mehr.
-- Der interne Bridge-Token wird kryptographisch sicher erzeugt und im privaten Docker-Volume `fareweave-secrets` persistent gespeichert.
+- Der interne Bridge-Token wird kryptographisch sicher erzeugt und im privaten Docker-Volume `traviorel-secrets` persistent gespeichert.
 - Bestehende explizite `DB_CFFI_TOKEN`-Konfigurationen bleiben kompatibel und haben Vorrang.
 - `curl_cffi` bleibt vollständig im App-Image enthalten.
 
@@ -143,7 +143,7 @@
 - Das Standard-Ergebnisbudget wurde auf zehn Verbindungen erweitert.
 - Bei aktivierter Suche werden bis zu zwei tatsächlich verfügbare FlixTrain- und zwei FlixBus-Verbindungen berücksichtigt; die übrigen Plätze werden bevorzugt mit Bahnverbindungen gefüllt.
 - FlixTrain und FlixBus werden getrennt klassifiziert und können einander nicht mehr durch die Reihenfolge der Providerantwort aus dem Ergebnisfenster verdrängen.
-- FareWeave wertet den gesamten von trvl gelieferten Flix-Rohpool aus, bevor Zeitfenster, Flags, Deduplizierung, Ranking und sichtbare Auswahl angewendet werden.
+- Traviorel wertet den gesamten von trvl gelieferten Flix-Rohpool aus, bevor Zeitfenster, Flags, Deduplizierung, Ranking und sichtbare Auswahl angewendet werden.
 - Konkrete Flix-Haltestellen werden über `station_id` aus aktuellen Flix-Daten aufgelöst und mit Name, Stadt, Adresse und Koordinaten erhalten.
 - Die Oberfläche unterstützt eine automatische sowie eine verbindliche manuelle Auswahl konkret verfügbarer Flix-Halte.
 - Generische Access-/Egress-Verbindungen verbinden den angefragten Bahnhof mit abweichenden tatsächlichen Flix-Halten; konkrete Halte und einzelne Segmente bleiben sichtbar.
@@ -154,4 +154,4 @@
 
 ## 0.0.1
 
-- Erste öffentliche Version von FareWeave.
+- Erste öffentliche Version von Traviorel.

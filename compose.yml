@@ -1,6 +1,8 @@
+name: traviorel
+
 services:
   secret-init:
-    image: ghcr.io/lesecuritae/fareweave-app:latest
+    image: ghcr.io/lesecuritae/traviorel-app:latest
     build:
       context: ./tool
       args:
@@ -9,24 +11,24 @@ services:
     user: "0:0"
     environment:
       DB_CFFI_TOKEN: "${DB_CFFI_TOKEN:-}"
-      DB_CFFI_TOKEN_FILE: /run/fareweave-secrets/db_cffi_token
+      DB_CFFI_TOKEN_FILE: /run/traviorel-secrets/db_cffi_token
     volumes:
-      - fareweave-secrets:/run/fareweave-secrets
+      - traviorel-secrets:/run/traviorel-secrets
     security_opt:
       - no-new-privileges:true
     restart: "no"
 
   db-api:
-    image: ghcr.io/lesecuritae/fareweave-db-api:latest
+    image: ghcr.io/lesecuritae/traviorel-db-api:latest
     build:
       context: ./db-api
-    container_name: fareweave-db-api
+    container_name: traviorel-db-api
     environment:
       PORT: "3001"
-      USER_AGENT: fareweave/0.3.0
+      USER_AGENT: traviorel/0.3.0
       DB_CFFI_BRIDGE_URL: http://app:8000/internal/db-cffi/request
       DB_CFFI_TOKEN: "${DB_CFFI_TOKEN:-}"
-      DB_CFFI_TOKEN_FILE: /run/fareweave-secrets/db_cffi_token
+      DB_CFFI_TOKEN_FILE: /run/traviorel-secrets/db_cffi_token
       DBNAV_MAX_CONCURRENCY: "2"
       DBNAV_BLOCK_TTL_MS: "30000"
       DB_REQUEST_TIMEOUT_MS: "18000"
@@ -35,7 +37,7 @@ services:
     networks:
       - reisevergleich
     volumes:
-      - fareweave-secrets:/run/fareweave-secrets:ro
+      - traviorel-secrets:/run/traviorel-secrets:ro
     group_add:
       - "10001"
     depends_on:
@@ -46,12 +48,12 @@ services:
     restart: unless-stopped
 
   app:
-    image: ghcr.io/lesecuritae/fareweave-app:latest
+    image: ghcr.io/lesecuritae/traviorel-app:latest
     build:
       context: ./tool
       args:
         TRVL_REF: ${TRVL_REF:-v1.21.4}
-    container_name: fareweave-app
+    container_name: traviorel-app
     depends_on:
       secret-init:
         condition: service_completed_successfully
@@ -62,7 +64,7 @@ services:
       APP_TIMEZONE: Europe/Berlin
       DB_API_URL: http://db-api:3001
       DB_CFFI_TOKEN: "${DB_CFFI_TOKEN:-}"
-      DB_CFFI_TOKEN_FILE: /run/fareweave-secrets/db_cffi_token
+      DB_CFFI_TOKEN_FILE: /run/traviorel-secrets/db_cffi_token
       REISE_CACHE_DB: /var/lib/reisevergleich/cache.sqlite3
       HISTORY_ENABLED: "${HISTORY_ENABLED:-true}"
       HISTORY_CACHE_DIR: "${HISTORY_CACHE_DIR:-/var/lib/reisevergleich/history}"
@@ -111,10 +113,10 @@ services:
       TRVL_ALLOW_BROWSER_FALLBACKS: "false"
       CI: "1"
     volumes:
-      - fareweave-state:/var/lib/reisevergleich
-      - fareweave-secrets:/run/fareweave-secrets:ro
+      - traviorel-state:/var/lib/reisevergleich
+      - traviorel-secrets:/run/traviorel-secrets:ro
     ports:
-      - "${FAREWEAVE_BIND_HOST:-127.0.0.1}:${FAREWEAVE_PORT:-8791}:8000"
+      - "${TRAVIOREL_BIND_HOST:-127.0.0.1}:${TRAVIOREL_PORT:-8791}:8000"
     networks:
       - reisevergleich
     security_opt:
@@ -124,10 +126,10 @@ services:
 
 networks:
   reisevergleich:
-    name: fareweave-net
+    name: traviorel-net
 
 volumes:
-  fareweave-state:
-    name: fareweave-state
-  fareweave-secrets:
-    name: fareweave-secrets
+  traviorel-state:
+    name: traviorel-state
+  traviorel-secrets:
+    name: traviorel-secrets

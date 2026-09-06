@@ -26,22 +26,22 @@ assert "docker compose build" not in installer_text
 assert "interne Bridge-Token verwaltet Compose automatisch" in installer_text
 assert license_file.is_file(), "LICENSE fehlt"
 assert "MIT License" in license_file.read_text(encoding="utf-8")
-assert '${FAREWEAVE_BIND_HOST:-127.0.0.1}:${FAREWEAVE_PORT:-8791}:8000' in compose
+assert '${TRAVIOREL_BIND_HOST:-127.0.0.1}:${TRAVIOREL_PORT:-8791}:8000' in compose
 assert '0.0.0.0:8791:8000' not in compose
-assert 'fareweave-state:/var/lib/reisevergleich' in compose
+assert 'traviorel-state:/var/lib/reisevergleich' in compose
 assert "${DB_CFFI_TOKEN:-}" in compose
-assert "DB_CFFI_TOKEN_FILE: /run/fareweave-secrets/db_cffi_token" in compose
-assert "fareweave-secrets:/run/fareweave-secrets:ro" in compose
+assert "DB_CFFI_TOKEN_FILE: /run/traviorel-secrets/db_cffi_token" in compose
+assert "traviorel-secrets:/run/traviorel-secrets:ro" in compose
 assert "DB_CFFI_TOKEN=\n" in env_example
-assert "ghcr.io/lesecuritae/fareweave-app:latest" in compose
-assert "ghcr.io/lesecuritae/fareweave-db-api:latest" in compose
+assert "ghcr.io/lesecuritae/traviorel-app:latest" in compose
+assert "ghcr.io/lesecuritae/traviorel-db-api:latest" in compose
 assert "condition: service_healthy" in compose
 assert 'HISTORY_SNAPSHOT_SCHEDULER_ENABLED: "${HISTORY_SNAPSHOT_SCHEDULER_ENABLED:-true}"' in compose
 assert 'HISTORY_SNAPSHOT_INTERVAL_SECONDS: "${HISTORY_SNAPSHOT_INTERVAL_SECONDS:-86400}"' in compose
 assert 'SEARCH_DEPARTURE_TOLERANCE_MINUTES: "${SEARCH_DEPARTURE_TOLERANCE_MINUTES:-15}"' in compose
 assert "HEALTHCHECK" in app_dockerfile and "/api/health" in app_dockerfile
 assert "HEALTHCHECK" in db_api_dockerfile and "/health" in db_api_dockerfile
-assert "fareweave/0.3.0" in db_api_server and "fareweave/0.0.6" not in db_api_server
+assert "traviorel/0.3.0" in db_api_server and "traviorel/0.0.6" not in db_api_server
 assert 'version = "0.3.0"' in pyproject
 assert "Pillow" not in runtime_requirements
 for coverage_file in ("provider.py", "mapper.py", "analyzer.py", "cache.py"):
@@ -52,7 +52,7 @@ assert "OpenCellID" in third_party
 coverage_data = root / "tool" / "reisevergleich" / "coverage" / "data" / "mobile_broadband_2025_12.fwcov"
 assert coverage_data.stat().st_size > 1_000_000
 assert hashlib.sha256(coverage_data.read_bytes()).hexdigest() == "25330fedbd820a4ee6064aaeb2c4dabf621f10ab6b9df4feaad5c0a8e978b0c6"
-assert 'name = "fareweave"' in pyproject and 'testpaths = ["tests"]' in pyproject
+assert 'name = "traviorel"' in pyproject and 'testpaths = ["tests"]' in pyproject
 test_requirements = (root / "tool" / "requirements-test.txt").read_text(encoding="utf-8")
 assert "-r requirements.txt" in test_requirements
 assert "pytest>=8,<9" in test_requirements and "pytest-asyncio" in test_requirements

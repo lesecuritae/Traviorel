@@ -4,7 +4,7 @@ root = Path(os.environ.get("SOURCE_ROOT", Path(__file__).resolve().parents[1])) 
 html = (root / "index.html").read_text(encoding="utf-8")
 js = (root / "app.js").read_text(encoding="utf-8")
 css = (root / "styles.css").read_text(encoding="utf-8")
-assert "FareWeave" in html
+assert "Traviorel" in html
 assert '<script src="/assets/app.js" defer></script>' in html
 assert "/static/app.js" not in html
 assert bytes.fromhex("52656973656b6c6172").decode() not in html
@@ -151,9 +151,9 @@ for credit in ["Entwickelt von lesecuritae", "Eigenständiger, deterministischer
     assert credit in html
 assert 'class="project-credit"' in html
 assert 'class="support-panel"' in html
-assert "FareWeave wird unabhängig entwickelt und bleibt frei nutzbar." in html
+assert "Traviorel wird unabhängig entwickelt und bleibt frei nutzbar." in html
 assert "Wenn dir das Projekt hilft, unterstützt du damit die weitere Entwicklung." in html
-assert "FareWeave unterstützen" in html
+assert "Traviorel unterstützen" in html
 assert "justify-content:center" in css
 assert "margin:20px auto 0" in css
 assert "margin: -42px" not in css

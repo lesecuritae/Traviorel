@@ -62,7 +62,7 @@ def start_scheduler() -> tuple[asyncio.Task[None], asyncio.Event] | None:
     if not HISTORY_ENABLED or not HISTORY_SNAPSHOT_SCHEDULER_ENABLED:
         return None
     stop_event = asyncio.Event()
-    task = asyncio.create_task(scheduler_loop(stop_event), name="fareweave-history-snapshots")
+    task = asyncio.create_task(scheduler_loop(stop_event), name="traviorel-history-snapshots")
     return task, stop_event
 
 

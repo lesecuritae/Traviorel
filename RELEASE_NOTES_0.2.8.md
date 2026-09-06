@@ -1,6 +1,6 @@
-# FareWeave 0.2.8 – FlixTrain Partial Route Fix
+# Traviorel 0.2.8 – FlixTrain Partial Route Fix
 
-FareWeave 0.2.8 behebt die Ursache fehlerhafter Teilstrecken in mehrteiligen FlixTrain-Liveverbindungen.
+Traviorel 0.2.8 behebt die Ursache fehlerhafter Teilstrecken in mehrteiligen FlixTrain-Liveverbindungen.
 
 ## Routing und Parsing
 

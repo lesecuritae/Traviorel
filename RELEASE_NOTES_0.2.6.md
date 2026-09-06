@@ -1,11 +1,11 @@
-# FareWeave 0.2.6 – Simplified Search Experience
+# Traviorel 0.2.6 – Simplified Search Experience
 
-FareWeave 0.2.6 vereinfacht die Bodenreisesuche und hält technische Providerentscheidungen aus dem Suchformular heraus.
+Traviorel 0.2.6 vereinfacht die Bodenreisesuche und hält technische Providerentscheidungen aus dem Suchformular heraus.
 
 ## Suchformular
 
 - Zug und Bus sind als direkt sichtbare Verkehrsmittel unabhängig auswählbar.
-- FareWeave fragt die dazu passenden Bahn- und Busanbieter automatisch ab.
+- Traviorel fragt die dazu passenden Bahn- und Busanbieter automatisch ab.
 - Split-Ticket bleibt als kleiner Haken direkt unter der Verkehrsmittelauswahl sichtbar.
 - Das Deutschlandticket bleibt eine sichtbare Kernentscheidung.
 - Seltene technische Einstellungen stehen nach dem Suchbutton in einem eigenen Bereich; „Weitere Optionen“ entfällt.

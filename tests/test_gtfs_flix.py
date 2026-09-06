@@ -9,7 +9,7 @@ from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 
-os.environ.setdefault("FLIX_GTFS_DIR", "/tmp/fareweave-test-gtfs")
+os.environ.setdefault("FLIX_GTFS_DIR", "/tmp/traviorel-test-gtfs")
 
 from reisevergleich.gtfs_flix import (
     _build_database, _search_sync, enrich_live_prices, gtfs_local_datetime,

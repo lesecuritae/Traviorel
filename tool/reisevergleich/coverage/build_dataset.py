@@ -62,7 +62,7 @@ def build(source: Path, destination: Path) -> dict[str, int]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build FareWeave coverage raster from the official BNetzA CSV ZIP")
+    parser = argparse.ArgumentParser(description="Build Traviorel coverage raster from the official BNetzA CSV ZIP")
     parser.add_argument("source", type=Path)
     parser.add_argument("destination", type=Path)
     args = parser.parse_args()

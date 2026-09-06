@@ -3,7 +3,7 @@ const state = {
   travelMode: 'ground',
   journeyType: 'round_trip',
   durationNights: 7,
-  dticket: (localStorage.getItem('fareweave-dticket') ?? localStorage.getItem('reisevergleich-dticket')) === 'true',
+  dticket: (localStorage.getItem('traviorel-dticket') ?? localStorage.getItem('reisevergleich-dticket')) === 'true',
   hotelType: 'hotel',
   stations: {origin: null, destination: null},
 };
@@ -714,7 +714,7 @@ function bind() {
   }));
   document.querySelectorAll('[data-dticket]').forEach(btn => btn.addEventListener('click', () => {
     state.dticket = btn.dataset.dticket === 'true';
-    localStorage.setItem('fareweave-dticket', String(state.dticket));
+    localStorage.setItem('traviorel-dticket', String(state.dticket));
     syncDticket();
   }));
   document.querySelectorAll("[data-hotel-type]").forEach(btn => btn.addEventListener("click", () => {

@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 async def main() -> None:
-    with tempfile.TemporaryDirectory(prefix="fareweave-history-live-") as directory:
+    with tempfile.TemporaryDirectory(prefix="traviorel-history-live-") as directory:
         os.environ["HISTORY_CACHE_DIR"] = str(Path(directory) / "history")
         os.environ["REISE_CACHE_DB"] = str(Path(directory) / "cache.sqlite3")
         from reisevergleich.history import build_relation_samples, query_local_history

@@ -26,6 +26,6 @@ python -m reisevergleich.coverage.build_dataset \
 ```
 
 The public data identifies only the number of networks per technology, not the
-operator identities for each grid cell. FareWeave consequently reports route
+operator identities for each grid cell. Traviorel consequently reports route
 shares with at least one, two, or three broadband networks (the latter also
 includes cells with four networks) and does not infer operator-specific values.

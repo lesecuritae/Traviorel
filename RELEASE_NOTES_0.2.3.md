@@ -1,6 +1,6 @@
-# FareWeave 0.2.3
+# Traviorel 0.2.3
 
-FareWeave 0.2.3 stabilisiert die Reiseoberfläche, die gemeinsame Kalenderbedienung und providerübergreifende Flix-Verbindungen. Coverage-Berechnung und OpenCellID-Datenbasis bleiben unverändert.
+Traviorel 0.2.3 stabilisiert die Reiseoberfläche, die gemeinsame Kalenderbedienung und providerübergreifende Flix-Verbindungen. Coverage-Berechnung und OpenCellID-Datenbasis bleiben unverändert.
 
 ## Flix und Routing
 

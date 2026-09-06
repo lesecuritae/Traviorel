@@ -44,7 +44,7 @@ async def test_scheduler_starts_and_runs_on_schedule(monkeypatch) -> None:
     monkeypatch.setattr(scheduler, "HISTORY_SNAPSHOT_INTERVAL_SECONDS", 60)
     monkeypatch.setattr(scheduler, "run_snapshot_cycle", cycle)
     handle = scheduler.start_scheduler()
-    assert handle is not None and handle[0].get_name() == "fareweave-history-snapshots"
+    assert handle is not None and handle[0].get_name() == "traviorel-history-snapshots"
     await asyncio.wait_for(triggered.wait(), timeout=1)
     await scheduler.stop_scheduler(handle)
     assert handle[0].done()

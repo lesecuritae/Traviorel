@@ -22,12 +22,12 @@ jobs:
       matrix:
         include:
           - service: app
-            image: lesecuritae/fareweave-app
+            image: lesecuritae/traviorel-app
             context: ./tool
             dockerfile: ./tool/Dockerfile
             build_args: TRVL_REF=v1.21.4
           - service: db-api
-            image: lesecuritae/fareweave-db-api
+            image: lesecuritae/traviorel-db-api
             context: ./db-api
             dockerfile: ./db-api/Dockerfile
             build_args: DB_VENDO_COMMIT=5afe12a80e02cf111f38f3fa30ae87aaa532d1d6

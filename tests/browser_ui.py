@@ -7,8 +7,8 @@ from pathlib import Path
 
 from playwright.async_api import async_playwright
 
-BASE_URL = os.getenv("FAREWEAVE_TEST_URL", "http://127.0.0.1:8791")
-ARTIFACTS = Path(os.getenv("FAREWEAVE_BROWSER_ARTIFACTS", ".browser-artifacts"))
+BASE_URL = os.getenv("TRAVIOREL_TEST_URL", "http://127.0.0.1:8791")
+ARTIFACTS = Path(os.getenv("TRAVIOREL_BROWSER_ARTIFACTS", ".browser-artifacts"))
 
 
 async def wait_selected(page, *fields: str, timeout_ms: int = 30_000) -> None:
@@ -85,13 +85,13 @@ async def check_viewport(browser, width: int, height: int) -> None:
     assert await page.locator("#originSuggestions button").count() > 1
     assert "München Hbf" in await page.locator("#originSuggestions button").first.inner_text()
     assert "Flughafen" not in " ".join(await page.locator("#originSuggestions button").all_inner_texts())
-    await page.screenshot(path=ARTIFACTS / f"fareweave-location-choice-{width}x{height}.png", full_page=True)
+    await page.screenshot(path=ARTIFACTS / f"traviorel-location-choice-{width}x{height}.png", full_page=True)
     await page.locator("#origin").fill("")
     if width <= 620:
         await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
         assert await page.evaluate("window.scrollY > 0")
         assert await page.locator(".topbar").evaluate("el => getComputedStyle(el).position") == "static"
-    await page.screenshot(path=ARTIFACTS / f"fareweave-{width}x{height}.png", full_page=True)
+    await page.screenshot(path=ARTIFACTS / f"traviorel-{width}x{height}.png", full_page=True)
     assert not errors, errors
     await context.close()
 
@@ -131,7 +131,7 @@ async def check_flexible_calendar(browser, width: int, height: int) -> None:
     assert "29,90" in await page.locator(".price-calendar-day.cheapest").inner_text()
     assert "Preis offen" in await page.locator(".price-calendar-day").nth(2).inner_text()
     assert await page.locator("body").evaluate("el => el.scrollWidth <= el.clientWidth")
-    await page.screenshot(path=ARTIFACTS / f"fareweave-flexible-calendar-{width}x{height}.png", full_page=True)
+    await page.screenshot(path=ARTIFACTS / f"traviorel-flexible-calendar-{width}x{height}.png", full_page=True)
     await context.close()
 
 
@@ -160,7 +160,7 @@ async def main() -> None:
         await page.locator("#searchProgress").wait_for(state="hidden", timeout=5_000)
         assert await page.locator(".connection-card").count() > 0
         assert await page.locator("body").evaluate("el => el.scrollWidth <= el.clientWidth")
-        await page.screenshot(path=ARTIFACTS / "fareweave-results-desktop.png", full_page=True)
+        await page.screenshot(path=ARTIFACTS / "traviorel-results-desktop.png", full_page=True)
         await browser.close()
     print("Browser UI, flexible Preise, Kalender, Loader und Desktop-/Mobil-Viewports: OK")
 

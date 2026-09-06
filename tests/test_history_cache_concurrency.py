@@ -10,7 +10,7 @@ import reisevergleich.history_cache as history_cache
 from reisevergleich.history_cache import DetailSpec
 
 
-with tempfile.TemporaryDirectory(prefix="fareweave-history-concurrency-") as directory:
+with tempfile.TemporaryDirectory(prefix="traviorel-history-concurrency-") as directory:
     original_cache_dir = history_cache.HISTORY_CACHE_DIR
     original_query = history_cache.query_remote_month
     original_put = history_cache.cache.history_detail_put
@@ -68,7 +68,7 @@ class FakeResponse:
         self.closed = True
 
 
-with tempfile.TemporaryDirectory(prefix="fareweave-history-curl-") as directory:
+with tempfile.TemporaryDirectory(prefix="traviorel-history-curl-") as directory:
     original_get = history_cache.curl_requests.get
     response = FakeResponse()
 

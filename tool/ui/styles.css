@@ -174,7 +174,7 @@ button { cursor: pointer; }
   .price-calendar-days { grid-template-columns:1fr 1fr; }
 }
 
-/* FareWeave components */
+/* Traviorel components */
 body { background: linear-gradient(180deg, #dff2f5 0, #eef5f7 280px, #eef5f7 100%); }
 .topbar { background: rgba(255,255,255,.9); border-color: rgba(16,59,74,.1); box-shadow: 0 1px 0 rgba(16,59,74,.04); }
 .brand-mark { background: var(--navy); color: white; border-radius: 50% 50% 50% 12px; font-size: 20px; }

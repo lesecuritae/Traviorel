@@ -1,6 +1,6 @@
-# FareWeave
+# Traviorel
 
-![FareWeave – self-hosted deterministic travel comparison](docs/assets/readme-hero.jpg)
+![Traviorel – self-hosted deterministic travel comparison](docs/assets/readme-hero.png)
 
 ## Choose your language / Sprache wählen
 

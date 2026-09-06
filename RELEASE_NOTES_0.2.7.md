@@ -1,6 +1,6 @@
-# FareWeave 0.2.7 – Route Data Stability Fix
+# Traviorel 0.2.7 – Route Data Stability Fix
 
-FareWeave 0.2.7 stabilisiert Segmentdarstellung und Mobilfunkanalyse, ohne Provider-, Preis-, Kalender- oder Suchlogik zu verändern.
+Traviorel 0.2.7 stabilisiert Segmentdarstellung und Mobilfunkanalyse, ohne Provider-, Preis-, Kalender- oder Suchlogik zu verändern.
 
 ## Routendarstellung
 

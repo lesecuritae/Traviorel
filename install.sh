@@ -24,7 +24,7 @@ fi
 say "Compose prüfen"
 docker compose config -q
 
-action_log="${TMPDIR:-/tmp}/fareweave-install-$$.log"
+action_log="${TMPDIR:-/tmp}/traviorel-install-$$.log"
 cleanup(){ rm -f "$action_log"; }
 trap cleanup EXIT
 
@@ -62,12 +62,12 @@ done
 [[ "$ok" -eq 1 ]] || { echo "FEHLER"; docker compose logs --no-color --tail=120 app db-api >&2 || true; exit 1; }
 echo "OK"
 
-bind_host="$(sed -n 's/^FAREWEAVE_BIND_HOST=//p' .env | tail -n1)"
-port="$(sed -n 's/^FAREWEAVE_PORT=//p' .env | tail -n1)"
+bind_host="$(sed -n 's/^TRAVIOREL_BIND_HOST=//p' .env | tail -n1)"
+port="$(sed -n 's/^TRAVIOREL_PORT=//p' .env | tail -n1)"
 bind_host="${bind_host:-127.0.0.1}"
 port="${port:-8791}"
 
 echo
-printf '%s\n' 'FAREWEAVE: INSTALLATION OK'
+printf '%s\n' 'TRAVIOREL: INSTALLATION OK'
 printf 'UI: http://%s:%s\n' "$bind_host" "$port"
 printf 'Health: http://%s:%s/api/health\n' "$bind_host" "$port"

@@ -67,7 +67,7 @@ def gtfs_seconds(value: str) -> int:
 
 
 def gtfs_local_datetime(service_day: date, seconds: int, agency_timezone: str | None) -> datetime:
-    """Convert GTFS wall-clock seconds in the agency timezone to FareWeave local time."""
+    """Convert GTFS wall-clock seconds in the agency timezone to Traviorel local time."""
     timezone_name = str(agency_timezone or "").strip() or str(TZ)
     try:
         source_timezone = ZoneInfo(timezone_name)

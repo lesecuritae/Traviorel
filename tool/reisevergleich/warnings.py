@@ -27,7 +27,7 @@ MAX_AREA_BBOX_KM2 = 250_000
 
 
 async def _get_json(path: str) -> Any:
-    headers = {"User-Agent": f"FareWeave/{APP_VERSION}", "Accept": "application/json"}
+    headers = {"User-Agent": f"Traviorel/{APP_VERSION}", "Accept": "application/json"}
     timeout = httpx.Timeout(NINA_TIMEOUT, connect=min(5.0, NINA_TIMEOUT))
     async with httpx.AsyncClient(timeout=timeout, headers=headers, follow_redirects=True) as client:
         response = await client.get(f"{NINA_API_URL}/{path.lstrip('/')}")

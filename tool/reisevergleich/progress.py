@@ -5,7 +5,7 @@ import re
 import time
 from typing import Any
 
-_current_search: contextvars.ContextVar[str | None] = contextvars.ContextVar("fareweave_search_id", default=None)
+_current_search: contextvars.ContextVar[str | None] = contextvars.ContextVar("traviorel_search_id", default=None)
 _searches: dict[str, dict[str, Any]] = {}
 _MAX_AGE = 900
 
