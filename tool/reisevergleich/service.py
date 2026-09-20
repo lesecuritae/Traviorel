@@ -4,6 +4,7 @@ import asyncio
 from datetime import date, timedelta
 from typing import Any
 
+from . import price_history
 from .cache import begin_scope, end_scope, get_cached_journey, save_journey, stats as cache_stats
 from .compare import compare_ground_round_trip
 from .config import TRIP_TIMEOUT, today_iso
@@ -87,7 +88,9 @@ async def search(request: TripRequest) -> dict[str, Any]:
             except (OSError, TimeoutError):
                 pass
         result["cache"] = {**cache_stats(), "journey_hit": False}
-        return public_result(result)
+        public = public_result(result)
+        price_history.record_search(public)
+        return public
     finally:
         end_scope(token)
 

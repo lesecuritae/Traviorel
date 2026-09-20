@@ -6,15 +6,17 @@ fragen ``mobile_coverage``, ``travel_warnings`` und ``delay_history`` später ge
 """
 from __future__ import annotations
 
+import asyncio
 import secrets
 import time
+from datetime import datetime
 from collections import OrderedDict
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
-from . import delay_index
+from . import delay_index, price_history as prices
 from .coverage import analyze_route
 from .models import PriceCalendarRequest, TripRequest
 from .service import price_calendar, search
@@ -330,6 +332,76 @@ def _dt(value: Any):
     from datetime import datetime
 
     return datetime.fromisoformat(str(value))
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+async def price_history(origin: str, destination: str, date: str = "", kind: str = "ground") -> CallToolResult:
+    """Wie hat sich der Preis einer Strecke entwickelt? Nur was dieser Server selbst gesehen hat (beginnt leer und wächst mit jeder Suche
+    und mit den beobachteten Strecken).
+
+    Args:
+        origin: Start, genau wie bei der Suche, zum Beispiel "Leipzig Hbf". Bei kind="flight" der Flughafencode, zum Beispiel "LEJ".
+        destination: Ziel, zum Beispiel "Hamburg Hbf" oder "FCO".
+        date: Reisetag YYYY-MM-DD für den Verlauf dieser einen Fahrt; leer für die Übersicht über alle beobachteten Tage.
+        kind: "ground" (Bahn/Flix) oder "flight".
+    """
+    if kind not in {"ground", "flight"}:
+        raise ValueError('kind muss "ground" oder "flight" sein.')
+    if date:
+        series = await asyncio.to_thread(prices.route_series, origin, destination, date, kind)
+        if not series:
+            return _text(f"Für {origin} → {destination} am {date} habe ich noch keine Preise gesehen. Nach einer Suche und mit watch_route wächst der Verlauf.", {"series": {}})
+        lines = [f"Preisverlauf {origin} → {destination} am {date}:"]
+        for provider, points in series.items():
+            values = [price for _, price in points]
+            latest_day, latest = points[-1]
+            ahead = (datetime.fromisoformat(date) - datetime.fromisoformat(latest_day)).days
+            trend = ""
+            if len(points) > 1:
+                delta = latest - points[0][1]
+                trend = f"; seit {points[0][0]} {'+' if delta >= 0 else ''}{delta:.2f} €".replace(".", ",")
+            lines.append(f"- {provider}: zuletzt {_euro(latest)} (am {latest_day}, {ahead} Tage vor Abreise), niedrigster {_euro(min(values))}, höchster {_euro(max(values))}, {len(points)} Beobachtung(en){trend}")
+        return _text("\n".join(lines), {"series": {p: pts for p, pts in series.items()}})
+    overview = await asyncio.to_thread(prices.route_overview, origin, destination, kind)
+    if not overview:
+        return _text(f"Für {origin} → {destination} habe ich noch keine Preise gesehen.", {"overview": {}})
+    lines = [f"Preise {origin} → {destination} (alle beobachteten Reisetage):"]
+    for provider, info in overview.items():
+        lines.append(f"- {provider}: typisch {_euro(info['typical'])}, niedrigster {_euro(info['lowest'])}, höchster {_euro(info['highest'])} ({info['observations']} Beobachtungen für {info['travel_dates']} Reisetage, {info['first_seen']} bis {info['last_seen']})")
+        if info["median_by_days_before"]:
+            lines.append("    Typischer Preis nach Vorlauf: " + ", ".join(f"{label}: {_euro(value)}" for label, value in info["median_by_days_before"].items()))
+    return _text("\n".join(lines), {"overview": overview})
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+async def watch_route(origin: str, destination: str) -> CallToolResult:
+    """Eine Bodenstrecke beobachten: Der Server fragt sie einmal am Tag für einige Reisetage ab, damit der Preisverlauf wächst (höchstens 5 Strecken).
+
+    Args:
+        origin: Start, zum Beispiel "Leipzig Hbf".
+        destination: Ziel, zum Beispiel "Hamburg Hbf".
+    """
+    watch = await asyncio.to_thread(prices.add_watch, origin, destination)
+    return _text(f"Ich beobachte {watch['origin']} → {watch['destination']} (Nr. {watch['id']}): täglich für Reisetage in 2, 7, 14, 21 und 28 Tagen.", watch)
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+async def list_watched_routes() -> CallToolResult:
+    """Welche Strecken werden für den Preisverlauf beobachtet?"""
+    watches = await asyncio.to_thread(prices.list_watches)
+    lines = [f"- Nr. {w['id']}: {w['origin']} → {w['destination']} (seit {w['created']}, zuletzt {w['last_run'] or 'noch nicht'})" for w in watches]
+    return _text("\n".join(lines) or "Es wird keine Strecke beobachtet.", {"watches": watches})
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False))
+async def stop_watching(watch_id: int) -> CallToolResult:
+    """Beobachtung einer Strecke beenden (die bisherigen Preise bleiben).
+
+    Args:
+        watch_id: Nummer aus list_watched_routes.
+    """
+    removed = await asyncio.to_thread(prices.remove_watch, int(watch_id))
+    return _text(f"Beobachtung {watch_id} ist beendet." if removed else f"Eine Beobachtung {watch_id} gibt es nicht.", {"removed": removed})
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))

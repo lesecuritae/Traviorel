@@ -100,9 +100,12 @@ Traviorel bringt unter `/mcp` (Streamable HTTP) einen MCP-Server mit. Ein Assist
 | `mobile_coverage` | Mobilfunk entlang einer Verbindung (Bundesnetzagentur, OpenCellID) |
 | `travel_warnings` | aktuelle amtliche Warnungen (NINA/BBK) entlang einer Verbindung |
 | `delay_history` | historische Pünktlichkeit je Zug und Halt, Anschluss-Chance beim Umsteigen |
+| `price_history` | wie sich der Preis einer Strecke entwickelt hat (Verlauf einer Fahrt oder Übersicht nach Vorlauf) |
+| `watch_route`, `list_watched_routes`, `stop_watching` | bis zu 5 Bodenstrecken täglich beobachten, damit der Preisverlauf wächst |
 | `find_station` | Bahnhöfe und Haltestellen zu einem Namen |
 
 - **Verspätungsindex:** Die historischen Verspätungen stammen aus dem offenen Datensatz `piebro/deutsche-bahn-data` (CC BY 4.0). Beim ersten `delay_history` baut Traviorel im Hintergrund einen kleinen lokalen Index der letzten Monate auf (etwa 2 Minuten und 600 MB Download je Monat, einmalig; `DELAY_INDEX_MONTHS`, Standard 3). Danach antwortet die Abfrage sofort. Abschalten mit `DELAY_INDEX=0`.
+- **Preisverlauf:** Die Quellen liefern nur den aktuellen Preis, und es gibt keine offene Quelle für historische Ticketpreise. Traviorel schreibt deshalb bei jeder frischen Suche den günstigsten Preis je Anbieter, Strecke, Reisetag und Abrufdatum in eine kleine lokale Datenbank (`price-history.sqlite3` im Datenordner, zwei Jahre). Beobachtete Strecken fragt der Server einmal am Tag für Reisetage in 2, 7, 14, 21 und 28 Tagen ab (`PRICE_WATCH_INTERVAL_HOURS`). Der Verlauf beginnt leer und wird erst nach Wochen aussagekräftig. Abschalten mit `PRICE_HISTORY=0`.
 - **Einrichtung:** Adresse `https://<dein-server>/mcp`. In Open WebUI: Admin-Bereich → Einstellungen → Externe Werkzeuge → hinzufügen, Typ „MCP (Streamable HTTP)“.
 - Abschalten: `TRAVIOREL_MCP=0`.
 

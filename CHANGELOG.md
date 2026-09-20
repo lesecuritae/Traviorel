@@ -1,6 +1,7 @@
 # Changelog
 ## Unveröffentlicht
 
+- Preisverlauf: Traviorel schreibt bei jeder frischen Suche den günstigsten Preis je Anbieter, Strecke, Reisetag und Abrufdatum mit (lokale SQLite-Datei) und wertet ihn mit dem MCP-Werkzeug `price_history` aus (Verlauf einer Fahrt, Übersicht mit typischem Preis je Vorlauf). Bis zu 5 Strecken lassen sich mit `watch_route` täglich beobachten. Der Verlauf beginnt leer.
 - MCP-Server unter `/mcp` (nur lesend) mit `search_ground`, `plan_flight_trip`, `price_calendar_search`, `mobile_coverage`, `travel_warnings`, `delay_history` und `find_station`. Eine Suche merkt sich ihre Verbindungen unter einer `ref`, mit der die Zusatzwerkzeuge dieselbe Verbindung abfragen. Abschaltbar mit `TRAVIOREL_MCP=0`.
 - Verspätungsindex: Die historische Pünktlichkeit kommt aus einem lokalen Index, der im Hintergrund aus dem offenen Datensatz `piebro/deutsche-bahn-data` aufgebaut wird (etwa 2 Minuten je Monat). Die bisherige Abfrage je Zug lief bei neuen Zügen meist in ein Zeitlimit; der Index antwortet sofort und nennt je Zug und Halt den Anteil mit höchstens 5, 10 und 30 Minuten Verspätung, die mittlere Verspätung und die Ausfälle, dazu die Anschluss-Chance beim Umsteigen.
 - Fehler behoben: Die Hotelsuche über Skiplagged lieferte für „Rom“ Hotels bei Detroit (der Dienst gleicht Städtenamen unscharf ab). Jetzt wird der Stadtname ins Englische gebracht („Rome“), und nur Hotels, deren Adresse die gesuchte Stadt nennt, werden übernommen; sonst greift wie bisher trvl.
