@@ -115,7 +115,7 @@ AIRPORT_PROVIDER_ALIASES = {
 }
 
 AIRPORT_PROVIDER_QUERIES = {
-    "BER": "Berlin Brandenburg Flughafen BER Terminal 1-2",
+    "BER": "Berlin Brandenburg Airport",  # so heißt der Flughafen in Transitous; „… Flughafen BER Terminal 1-2“ wurde dort nie sicher gefunden
     "LEJ": "Leipzig Halle Flughafen",
     "DUS": "Düsseldorf Flughafen",
     "FRA": "Frankfurt Flughafen",
@@ -124,7 +124,7 @@ AIRPORT_PROVIDER_QUERIES = {
     "CGN": "Köln Bonn Flughafen",
     "HAJ": "Hannover Flughafen",
     "NUE": "Nürnberg Flughafen",
-    "STR": "Stuttgart Flughafen Messe",
+    "STR": "Flughafen/Messe",  # Transitous kennt den Halt so (ohne Stadtnamen)
 }
 
 TRVL_AIRPORT_SOURCE = Path(os.getenv("TRVL_AIRPORT_SOURCE", "/usr/share/reisevergleich/trvl_airports.go"))

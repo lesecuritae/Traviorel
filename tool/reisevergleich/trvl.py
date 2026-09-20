@@ -20,7 +20,7 @@ from .config import (
 from . import fx, flix_api, skiplagged
 from .models import FlightRequest, HotelRequest, ReiseRequest
 from .db import rank_routes
-from .airports import AIRPORT_TRANSIT_QUERIES, CITY_TRANSIT_QUERIES
+from .airports import AIRPORT_PROVIDER_QUERIES, AIRPORT_TRANSIT_QUERIES, CITY_TRANSIT_QUERIES
 from .transitous import search as transitous_direct_search
 from .utils import (
     as_float,
@@ -1323,15 +1323,26 @@ async def _provider_ground_commands(
     return routes, statuses
 
 
+def _transitous_station_query(value: str) -> str:
+    """DB-Schreibweisen wie „Frankfurt(Main)Hbf“ heißen bei Transitous „Frankfurt(Main) Hbf“ (Leerzeichen nach der Klammer)."""
+    return re.sub(r"\)(?=[^\s,.;)])", ") ", str(value or "").strip())
+
+
+def _airport_query(airport_iata: str, city: str = "") -> str:
+    """Suchtext für einen Flughafen bei Transitous: die geprüften Angaben für ausländische (AIRPORT_TRANSIT_QUERIES) und
+    deutsche Flughäfen (AIRPORT_PROVIDER_QUERIES); sonst Ortsname und Code. Bisher fehlten die deutschen, sodass für BER
+    „<Stadt> Airport BER“ gesucht wurde und nichts gefunden wurde."""
+    code = airport_iata.upper()
+    return AIRPORT_TRANSIT_QUERIES.get(code) or AIRPORT_PROVIDER_QUERIES.get(code) or f"{city} Airport {code}".strip()
+
+
 async def _direct_transitous_transfer(
     airport_iata: str, destination: str, travel_date: str,
     *, depart_after: str | None = None, arrive_before: str | None = None, reverse: bool = False,
     max_results: int = 6,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    destination_query = CITY_TRANSIT_QUERIES.get(destination.casefold().strip(), destination)
-    airport_query = AIRPORT_TRANSIT_QUERIES.get(
-        airport_iata.upper(), f"{destination} Airport {airport_iata.upper()}"
-    )
+    destination_query = CITY_TRANSIT_QUERIES.get(destination.casefold().strip()) or _transitous_station_query(destination)
+    airport_query = _airport_query(airport_iata, destination)
     request = ReiseRequest(
         origin=destination_query if reverse else airport_query,
         destination=airport_query if reverse else destination_query,
