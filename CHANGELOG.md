@@ -1,4 +1,9 @@
 # Changelog
+## Unveröffentlicht
+
+- Hotelsuche: Treffer, die nur von Langzeitmiet-Anbietern stammen (Spotahome, Uniplaces, HousingAnywhere, Flatio, Wunderflats, Landing, Blueground) oder als Monatspreis ausgewiesen sind, werden aus den Ergebnissen entfernt. Ihr Preis war eine Monatsmiete und stand als Übernachtungspreis da (zum Beispiel 1600 € für eine Wohnung in Rom). In einer Stichprobe für Rom fielen 100 von 243 Treffern weg.
+- Docker: trvl wird für die Zielarchitektur nativ gebaut statt in der QEMU-Emulation. Der arm64-Build braucht dadurch Sekunden statt einer Viertelstunde.
+
 ## 0.3.0 - 2026-08-29
 
 - Aktuelle amtliche NINA-/BBK-Warnungen werden nach einer erfolgreichen Reise separat und ohne Einfluss auf Routing, Ranking oder Preise geladen.

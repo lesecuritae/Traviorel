@@ -734,8 +734,28 @@ def _hotel_nightly(item: dict[str, Any]) -> float:
     return min(values) if values else 0.0
 
 
+# Anbieter für Monats- und Langzeitmieten: Ihr „Preis“ ist eine Monatsmiete, keine Übernachtung (Spotahome zeigt
+# zum Beispiel 1600 € für eine Wohnung in Rom). Solche Treffer gehören nicht in einen Reisevergleich.
+LONG_TERM_RENTAL_PROVIDERS = frozenset({
+    "spotahome", "uniplaces", "housinganywhere", "flatio", "wunderflats", "landing", "blueground",
+})
+
+
+def _is_long_term_rental(item: dict[str, Any]) -> bool:
+    """True, wenn der Treffer nur von Langzeitmiet-Anbietern stammt oder als Monatspreis ausgewiesen ist."""
+    if str(item.get("price_basis") or "").casefold() == "monthly":
+        return True
+    providers = {
+        str(source.get("provider") or "").casefold()
+        for source in item.get("sources") or []
+        if isinstance(source, dict)
+    }
+    providers.discard("")
+    return bool(providers) and providers <= LONG_TERM_RENTAL_PROVIDERS
+
+
 def compact_hotel_options(data: Any, max_results: int) -> list[dict[str, Any]]:
-    rows = _list_from(data, ("hotels", "results", "properties", "offers"))
+    rows = [item for item in _list_from(data, ("hotels", "results", "properties", "offers")) if not _is_long_term_rental(item)]
     output: list[dict[str, Any]] = []
     for item in rows:
         total = _hotel_verified_total(item)
