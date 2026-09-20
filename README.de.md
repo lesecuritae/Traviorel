@@ -88,6 +88,10 @@ Nach einer erfolgreichen Suche lädt Traviorel aktuelle amtliche Warnungen von N
 
 Die Warnungen verändern weder Verbindung, Ranking noch Preis und lösen keine automatische Umplanung aus. Listen, Geometrien und Details werden fünf Minuten gecacht. Ist der Dienst nicht erreichbar oder liegt keine passende Warnung vor, bleibt die Reiseausgabe unverändert.
 
+## trvl ist optional
+
+Bahn, Flix, Flüge, Hotels und Flughafen-Transfers laufen über eigene Direktwege (DB-Logik, Flix, Skiplagged, Transitous). Mit `TRVL_ENABLED=0` oder dem Image `traviorel-app-lite` läuft Traviorel ganz ohne trvl. Dann fehlen nur Taxi-Schätzungen und Anbieter, die es nur über trvl gibt. Solange trvl im Image ist, ist es zusätzlich ein Rückfall, wenn ein Direktweg ausfällt.
+
 ## Warum trvl drin ist
 
 Bei der Suche nach brauchbaren Datenquellen bin ich auf [trvl](https://github.com/MikkoParkkola/trvl) gestoßen.

@@ -1,6 +1,8 @@
 # Changelog
 ## Unveröffentlicht
 
+- trvl ist jetzt optional: Mit `TRVL_ENABLED=0` läuft Traviorel ohne trvl. Bahn (eigene DB-Logik), Flix (Fahrplan und Preise direkt bei Flix), Flüge und Hotels (Skiplagged) und die Flughafen-Transfers (Transitous plus Flix) brauchen es nicht mehr. Es fehlen dann nur die Taxi-Schätzungen, die letzte trvl-Route und Anbieter, die es nur über trvl gibt (etwa Ryanair-Direktabfragen). Der Gesundheitsbericht meldet trvl dann als bewusst abgeschaltet statt als Fehler.
+- Neues Image `traviorel-app-lite` (Bau mit `--build-arg WITH_TRVL=0`): enthält trvl nicht und damit auch nicht dessen Noncommercial-Lizenz.
 - Flüge und Hotels über den offenen MCP-Dienst von Skiplagged (ohne Schlüssel, ohne trvl): Die Suche fragt zuerst Skiplagged, schlägt das fehl (Ratenbegrenzung, Ausfall), greift wie bisher trvl. Hotels kommen mit Nacht- und Gesamtpreis und sind echte Hotels statt Ferienwohnungen. Mit `FLIGHT_NATIVE=0` beziehungsweise `HOTEL_NATIVE=0` bleibt es beim alten Weg.
 - Währung: Skiplagged liefert Dollar. Diese Preise (auch die über trvl) werden mit dem Tageskurs der EZB in Euro umgerechnet und tragen `original_price`/`original_currency`. Zuvor konnte ein Dollarpreis neben Euro-Preisen als „günstigster“ Flug erscheinen (86 $ statt 75,04 €).
 - FlixBus/FlixTrain: Die Preise kommen jetzt direkt von der öffentlichen Flix-Suche (ohne Schlüssel, ohne trvl) und bleiben mit trvl als Rückfall abgesichert. Im Vergleich für Berlin–Hamburg lieferte die eigene Abfrage alle 34 Verbindungen von trvl mit identischen Preisen und 9 weitere. Mit `FLIX_NATIVE=0` bleibt es beim alten Weg.

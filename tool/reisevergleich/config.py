@@ -20,6 +20,9 @@ NINA_API_URL = os.getenv("NINA_API_URL", "https://warnung.bund.de/api31").rstrip
 NINA_TIMEOUT = min(max(float(os.getenv("NINA_TIMEOUT", "12")), 3.0), 30.0)
 NINA_CACHE_TTL = min(max(int(os.getenv("NINA_CACHE_TTL", "300")), 60), 1800)
 TRVL_BIN = os.getenv("TRVL_BIN", "trvl")
+# trvl ist optional: mit TRVL_ENABLED=0 (oder einem Image ohne trvl) laufen Bahn, Flix, Flüge und Hotels über die eigenen
+# Direktwege; es fehlen dann nur Taxi-Schätzungen und Anbieter, die es nur über trvl gibt.
+TRVL_ENABLED = os.getenv("TRVL_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
 FLIX_GTFS_URL = os.getenv("FLIX_GTFS_URL", "https://api.transitous.org/gtfs/eu_flixbus.gtfs.zip")
 FLIX_GTFS_DIR = os.getenv("FLIX_GTFS_DIR", "/var/lib/reisevergleich/flix-gtfs")
 FLIX_GTFS_MAX_AGE = min(max(int(os.getenv("FLIX_GTFS_MAX_AGE", "86400")), 3600), 604800)

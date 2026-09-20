@@ -30,6 +30,7 @@ Traviorel lädt die beiden großen Transportbibliotheken beim Container-Build au
 - Required Notice: `Copyright (c) 2026 Mikko Parkkola (https://github.com/MikkoParkkola/trvl)`
 - Die Lizenz erlaubt nur die dort definierten nichtkommerziellen Zwecke. Für kommerzielle Nutzung ist eine separate Lizenz des trvl-Rechteinhabers erforderlich.
 - Die Originallizenz wird beim Container-Build nach `/usr/share/licenses/trvl/LICENSE` kopiert.
+- trvl ist optional. Das Image `traviorel-app-lite` (Build mit `WITH_TRVL=0`) enthält weder trvl noch dessen Airport-Tabelle; dort gilt diese Lizenz nicht. Es läuft mit `TRVL_ENABLED=0` über die eigenen Direktwege.
 
 ## db-vendo-client
 

@@ -135,7 +135,7 @@ async def diagnostics() -> dict[str, Any]:
         db.get("ok")
         and transitous.get("ok")
         and cache.get("status") == "ok"
-        and all(item.get("ok") for item in trvl.values())
+        and (trvl.get("enabled") is False or all(item.get("ok") for item in trvl.values()))
     )
     return {
         "status": "ok" if required else "degraded",

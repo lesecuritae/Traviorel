@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import quote, urlencode
 
-from .config import SEARCH_DEPARTURE_TOLERANCE_MINUTES, TZ
+from .config import SEARCH_DEPARTURE_TOLERANCE_MINUTES, TRVL_BIN, TRVL_ENABLED, TZ
 
 
 def as_float(value: Any) -> float:
@@ -97,6 +97,8 @@ def local_clock(value: Any) -> str | None:
 
 
 def run_command(command: list[str], timeout: int) -> dict[str, Any]:
+    if command and command[0] == TRVL_BIN and not TRVL_ENABLED:
+        return {"ok": False, "code": 127, "stdout": "", "stderr": "trvl ist abgeschaltet (TRVL_ENABLED=0)", "command": command}
     try:
         completed = subprocess.run(
             command,

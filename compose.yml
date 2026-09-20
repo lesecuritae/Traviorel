@@ -7,6 +7,7 @@ services:
       context: ./tool
       args:
         TRVL_REF: ${TRVL_REF:-v1.21.4}
+        WITH_TRVL: ${WITH_TRVL:-1}
     command: ["python", "/app/init_db_cffi_token.py"]
     user: "0:0"
     environment:
@@ -53,6 +54,7 @@ services:
       context: ./tool
       args:
         TRVL_REF: ${TRVL_REF:-v1.21.4}
+        WITH_TRVL: ${WITH_TRVL:-1}
     container_name: traviorel-app
     depends_on:
       secret-init:

@@ -3,24 +3,32 @@ FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS trvl-builder
 ARG TARGETOS=linux
 ARG TARGETARCH
 ARG TRVL_REF=v1.21.4
+# WITH_TRVL=0 baut ein Image ohne trvl (und ohne dessen Noncommercial-Lizenz); Traviorel läuft dann mit den Direktwegen.
+ARG WITH_TRVL=1
 RUN case "$TRVL_REF" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "TRVL_REF must be a version tag such as v1.21.4" >&2; exit 2 ;; esac
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
-RUN git init trvl \
+RUN if [ "$WITH_TRVL" = "1" ]; then git init trvl \
     && cd trvl \
     && git remote add origin https://github.com/MikkoParkkola/trvl.git \
     && git fetch --depth 1 origin "refs/tags/${TRVL_REF}:refs/tags/${TRVL_REF}" \
     && git checkout --detach "refs/tags/${TRVL_REF}" \
-    && git rev-parse HEAD > /tmp/TRVL_COMMIT
+    && git rev-parse HEAD > /tmp/TRVL_COMMIT; \
+    else mkdir -p trvl/internal/models && : > trvl/internal/models/airports.go \
+    && echo "trvl is not part of this image" > trvl/LICENSE && echo none > /tmp/TRVL_COMMIT; fi
 WORKDIR /src/trvl
-RUN TRVL_VERSION="${TRVL_REF#v}" && GOOS="${TARGETOS}" GOARCH="${TARGETARCH:-$(go env GOARCH)}" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.Version=${TRVL_VERSION}" -o /out/trvl ./cmd/trvl \
+RUN if [ "$WITH_TRVL" = "1" ]; then TRVL_VERSION="${TRVL_REF#v}" && GOOS="${TARGETOS}" GOARCH="${TARGETARCH:-$(go env GOARCH)}" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.Version=${TRVL_VERSION}" -o /out/trvl ./cmd/trvl \
     && if [ "${TARGETARCH:-$(go env GOARCH)}" = "$(go env GOARCH)" ]; then /out/trvl version | grep -F "trvl ${TRVL_VERSION}" >/dev/null && /out/trvl hotels --help | grep -F -- "--enrich-rooms" >/dev/null && /out/trvl flights --help | grep -F -- "--provider" >/dev/null && /out/trvl ground --help | grep -F -- "--provider" >/dev/null; fi \
-    && cp /tmp/TRVL_COMMIT /out/TRVL_COMMIT && echo "${TRVL_REF}" > /out/TRVL_REF
+    && cp /tmp/TRVL_COMMIT /out/TRVL_COMMIT && echo "${TRVL_REF}" > /out/TRVL_REF; \
+    else mkdir -p /out && printf '#!/bin/sh\nexit 127\n' > /out/trvl && chmod +x /out/trvl \
+    && cp /tmp/TRVL_COMMIT /out/TRVL_COMMIT && echo none > /out/TRVL_REF; fi
 
 FROM python:3.13-slim-bookworm
-ENV PYTHONDONTWRITEBYTECODE=1 \
+ARG WITH_TRVL=1
+ENV TRVL_ENABLED=${WITH_TRVL} \
+    PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     HOME=/var/lib/reisevergleich
 RUN apt-get update \

@@ -15,7 +15,7 @@ from .config import (
     FLIGHT_PROVIDER_CONCURRENCY, FLIGHT_PROVIDER_TIMEOUT, GROUND_PROVIDER_CONCURRENCY,
     GROUND_PROVIDER_TIMEOUT, HOTEL_ENRICH_TIMEOUT, HOTEL_HEADLINE_TIMEOUT,
     MAX_HOTEL_NIGHTLY_EUR, MAX_HOTEL_TOTAL_EUR, TRANSFER_PROVIDER_CONCURRENCY,
-    TRANSFER_PROVIDER_TIMEOUT, TRVL_BIN,
+    TRANSFER_PROVIDER_TIMEOUT, TRVL_BIN, TRVL_ENABLED,
 )
 from . import fx, flix_api, skiplagged
 from .models import FlightRequest, HotelRequest, ReiseRequest
@@ -1277,13 +1277,24 @@ async def _provider_ground_commands(
     timeout: int,
     concurrency: int,
     compact_limit: int,
+    native: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Bodenanbieter abfragen. ``native`` bildet Anbieter auf eigene Direktabfragen ab (sie laufen vor trvl);
+    ohne trvl (``TRVL_ENABLED=0``) werden Anbieter ohne eigenen Weg übersprungen."""
     semaphore = asyncio.Semaphore(concurrency)
-    tasks = [
-        asyncio.create_task(_run_provider_json(provider, command_builder(provider), timeout, semaphore))
-        for provider in providers
-    ]
-    results = await asyncio.gather(*tasks)
+    native = native or {}
+
+    async def one(provider: str):
+        if provider in native:
+            started = time.monotonic()
+            result = await native[provider]()
+            if result.get("ok") and (result.get("data") or {}).get("routes"):
+                return provider, result, time.monotonic() - started
+        if not TRVL_ENABLED:
+            return provider, {"ok": False, "error": "kein eigener Weg; trvl ist abgeschaltet", "skipped": True}, 0.0
+        return await _run_provider_json(provider, command_builder(provider), timeout, semaphore)
+
+    results = await asyncio.gather(*(asyncio.create_task(one(provider)) for provider in providers))
     routes: list[dict[str, Any]] = []
     statuses: list[dict[str, Any]] = []
     for provider, result, elapsed in results:
@@ -1293,7 +1304,10 @@ async def _provider_ground_commands(
                 route["provider"] = provider
             route["trvl_provider"] = provider
         routes.extend(found)
-        statuses.append(_command_status(provider, result, elapsed, len(found)))
+        status = _command_status(provider, result, elapsed, len(found))
+        if result.get("skipped"):
+            status["skipped"] = True
+        statuses.append(status)
     return routes, statuses
 
 
@@ -1358,15 +1372,26 @@ async def airport_transfer_search(
             cmd.extend(["--arrival-after", arrival_after])
         return cmd
 
+    airport_query = AIRPORT_TRANSIT_QUERIES.get(airport_iata.upper(), f"{airport_iata.upper()} Airport")
     raw_routes, statuses = await _provider_ground_commands(
         providers, command,
         timeout=TRANSFER_PROVIDER_TIMEOUT,
         concurrency=TRANSFER_PROVIDER_CONCURRENCY,
         compact_limit=max_results * 3,
+        native={"flixbus": lambda: flix_api.search(_flix_city_query(airport_query), _flix_city_query(destination), travel_date)},
     )
+    direct_done = False
+    if not any(route.get("trvl_provider") == "transitous" for route in raw_routes):
+        # Der öffentliche Nahverkehr ist der wichtigste Transfer: ohne trvl-Ergebnis fragt Traviorel Transitous selbst.
+        direct_routes, direct_status = await _direct_transitous_transfer(
+            airport_iata, destination, travel_date, depart_after=arrival_after, max_results=max_results,
+        )
+        raw_routes = raw_routes + direct_routes
+        statuses.append(direct_status)
+        direct_done = True
     routes = _filter_ground_window(raw_routes, travel_date, depart_after=arrival_after)
     routes = _merge_ground_options(routes, max_results)
-    if not routes:
+    if not routes and not direct_done:
         fallback_routes, fallback_status = await _direct_transitous_transfer(
             airport_iata, destination, travel_date, depart_after=arrival_after, max_results=max_results,
         )
@@ -1404,15 +1429,25 @@ async def return_transfer_search(
             "--currency", "EUR", "--format", "json",
         ]
 
+    airport_query = AIRPORT_TRANSIT_QUERIES.get(airport_iata.upper(), f"{airport_iata.upper()} Airport")
     raw_routes, statuses = await _provider_ground_commands(
         providers, command,
         timeout=TRANSFER_PROVIDER_TIMEOUT,
         concurrency=TRANSFER_PROVIDER_CONCURRENCY,
         compact_limit=max_results * 3,
+        native={"flixbus": lambda: flix_api.search(_flix_city_query(origin), _flix_city_query(airport_query), travel_date)},
     )
+    direct_done = False
+    if not any(route.get("trvl_provider") == "transitous" for route in raw_routes):
+        direct_routes, direct_status = await _direct_transitous_transfer(
+            airport_iata, origin, travel_date, arrive_before=arrive_before, reverse=True, max_results=max_results,
+        )
+        raw_routes = raw_routes + direct_routes
+        statuses.append(direct_status)
+        direct_done = True
     routes = _filter_ground_window(raw_routes, travel_date, arrive_before=arrive_before)
     routes = _merge_ground_options(routes, max_results)
-    if not routes:
+    if not routes and not direct_done:
         fallback_routes, fallback_status = await _direct_transitous_transfer(
             airport_iata, origin, travel_date, arrive_before=arrive_before, reverse=True, max_results=max_results,
         )
@@ -1422,7 +1457,7 @@ async def return_transfer_search(
 
     # Nur als streng begrenzter letzter Versuch: trvl route kann zusätzliche
     # multimodale Optionen finden, darf aber maximal einen Provider-Timeout lang laufen.
-    if not routes and arrive_before:
+    if not routes and arrive_before and TRVL_ENABLED:
         route_command = [
             TRVL_BIN, "route", origin, airport_iata, travel_date,
             "--arrive-by", arrive_before,
@@ -1461,6 +1496,8 @@ async def return_transfer_search(
     }
 
 async def capability_report() -> dict[str, Any]:
+    if not TRVL_ENABLED:
+        return {"enabled": False, "note": "trvl ist abgeschaltet; Direktwege sind aktiv"}
     commands = ["flights", "hotels", "airport-transfer", "ground", "route"]
     report: dict[str, Any] = {}
     for command in commands:
