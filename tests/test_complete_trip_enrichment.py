@@ -1,5 +1,12 @@
 import asyncio
 
+import os
+
+# Diese Tests prüfen den trvl-Weg (und den Rückfall darauf); die eigenen Direktwege sind in test_flix_api.py und
+# test_skiplagged_fx.py abgedeckt und dürfen hier nicht ins Netz gehen.
+for _name in ("FLIX_NATIVE", "FLIGHT_NATIVE", "HOTEL_NATIVE"):
+    os.environ[_name] = "0"
+
 from reisevergleich.models import TripRequest
 import reisevergleich.planner as planner
 

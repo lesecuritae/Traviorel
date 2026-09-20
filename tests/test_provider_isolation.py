@@ -3,6 +3,13 @@ from __future__ import annotations
 import asyncio
 from datetime import date, timedelta
 
+import os
+
+# Diese Tests prüfen den trvl-Weg (und den Rückfall darauf); die eigenen Direktwege sind in test_flix_api.py und
+# test_skiplagged_fx.py abgedeckt und dürfen hier nicht ins Netz gehen.
+for _name in ("FLIX_NATIVE", "FLIGHT_NATIVE", "HOTEL_NATIVE"):
+    os.environ[_name] = "0"
+
 from reisevergleich import trvl
 from reisevergleich.models import FlightRequest, HotelRequest, ReiseRequest
 
