@@ -330,6 +330,20 @@ def _connection(incoming: dict[str, Any], outgoing: dict[str, Any]) -> dict[str,
     }
 
 
+async def _indexed_reliability(identity: tuple[str, str, str, str]) -> dict[str, Any] | None:
+    """Zuverlässigkeit aus dem lokalen Verspätungsindex; ``None``, wenn er aus ist, noch fehlt oder den Zug nicht kennt."""
+    if not delay_index.ENABLED:
+        return None
+    try:
+        if not delay_index.built_months():
+            delay_index.request_build()  # der Index baut sich beim ersten Bedarf im Hintergrund auf
+            return None
+        stats = await delay_index.arrival_stats(identity[0], identity[1], identity[3])
+        return index_statistics(stats) if stats and "ran" in stats else None
+    except Exception:  # noqa: BLE001 - der Index ist eine Beschleunigung; ohne ihn läuft die bisherige Abfrage
+        return None
+
+
 async def _enrich_route(route: dict[str, Any], semaphore: asyncio.Semaphore) -> dict[str, Any]:
     legs = route.get("legs")
     if not isinstance(legs, list):
@@ -343,13 +357,9 @@ async def _enrich_route(route: dict[str, Any], semaphore: asyncio.Semaphore) -> 
         if identity is None:
             return {**leg, "reliability": {"status": "unavailable", "reason": "insufficient_train_identity"}}
         try:
-            if delay_index.ENABLED:
-                if delay_index.built_months():
-                    indexed = await delay_index.arrival_stats(identity[0], identity[1], identity[3])
-                    if indexed and "ran" in indexed:
-                        return {**leg, "reliability": index_statistics(indexed)}
-                else:
-                    delay_index.request_build()  # der Index baut sich beim ersten Bedarf im Hintergrund auf
+            indexed = await _indexed_reliability(identity)
+            if indexed is not None:
+                return {**leg, "reliability": indexed}
             stats = await asyncio.wait_for(
                 _statistics_for_leg(*identity, HISTORY_DEFAULT_WINDOW_DAYS, _as_datetime(leg.get("departure")), semaphore),
                 timeout=HISTORY_REMOTE_TIMEOUT,
