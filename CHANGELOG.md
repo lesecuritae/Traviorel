@@ -1,6 +1,8 @@
 # Changelog
 ## Unveröffentlicht
 
+- Flüge und Hotels über den offenen MCP-Dienst von Skiplagged (ohne Schlüssel, ohne trvl): Die Suche fragt zuerst Skiplagged, schlägt das fehl (Ratenbegrenzung, Ausfall), greift wie bisher trvl. Hotels kommen mit Nacht- und Gesamtpreis und sind echte Hotels statt Ferienwohnungen. Mit `FLIGHT_NATIVE=0` beziehungsweise `HOTEL_NATIVE=0` bleibt es beim alten Weg.
+- Währung: Skiplagged liefert Dollar. Diese Preise (auch die über trvl) werden mit dem Tageskurs der EZB in Euro umgerechnet und tragen `original_price`/`original_currency`. Zuvor konnte ein Dollarpreis neben Euro-Preisen als „günstigster“ Flug erscheinen (86 $ statt 75,04 €).
 - FlixBus/FlixTrain: Die Preise kommen jetzt direkt von der öffentlichen Flix-Suche (ohne Schlüssel, ohne trvl) und bleiben mit trvl als Rückfall abgesichert. Im Vergleich für Berlin–Hamburg lieferte die eigene Abfrage alle 34 Verbindungen von trvl mit identischen Preisen und 9 weitere. Mit `FLIX_NATIVE=0` bleibt es beim alten Weg.
 - Hotelsuche: Treffer, die nur von Langzeitmiet-Anbietern stammen (Spotahome, Uniplaces, HousingAnywhere, Flatio, Wunderflats, Landing, Blueground) oder als Monatspreis ausgewiesen sind, werden aus den Ergebnissen entfernt. Ihr Preis war eine Monatsmiete und stand als Übernachtungspreis da (zum Beispiel 1600 € für eine Wohnung in Rom). In einer Stichprobe für Rom fielen 100 von 243 Treffern weg.
 - Docker: trvl wird für die Zielarchitektur nativ gebaut statt in der QEMU-Emulation. Der arm64-Build braucht dadurch Sekunden statt einer Viertelstunde.

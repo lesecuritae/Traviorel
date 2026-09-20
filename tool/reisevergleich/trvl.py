@@ -17,7 +17,7 @@ from .config import (
     MAX_HOTEL_NIGHTLY_EUR, MAX_HOTEL_TOTAL_EUR, TRANSFER_PROVIDER_CONCURRENCY,
     TRANSFER_PROVIDER_TIMEOUT, TRVL_BIN,
 )
-from . import flix_api
+from . import fx, flix_api, skiplagged
 from .models import FlightRequest, HotelRequest, ReiseRequest
 from .db import rank_routes
 from .airports import AIRPORT_TRANSIT_QUERIES, CITY_TRANSIT_QUERIES
@@ -449,9 +449,18 @@ def compact_flight_options(
         raw_legs = item.get("legs") if isinstance(item.get("legs"), list) else []
         legs = [_compact_flight_leg(leg) for leg in raw_legs if isinstance(leg, dict)]
         price = as_float(item.get("price"))
+        currency = item.get("currency") or ("EUR" if price > 0 else None)
+        original: dict[str, Any] = {}
+        if price > 0 and currency and str(currency).upper() != "EUR":
+            # Dollar-Preise (Skiplagged) sonst nicht mit Euro-Preisen vergleichbar; ohne EZB-Kurs bleibt der Preis unverändert.
+            converted = fx.to_eur(price, currency)
+            if converted is not None:
+                original = {"original_price": round(price, 2), "original_currency": str(currency).upper()}
+                price, currency = converted, "EUR"
         option: dict[str, Any] = {
+            **original,
             "price": round(price, 2) if price > 0 else None,
-            "currency": item.get("currency") or ("EUR" if price > 0 else None),
+            "currency": currency,
             "duration_minutes": as_int(item.get("duration")) or None,
             "stops": as_int(item.get("stops")),
             "provider": item.get("provider") or item.get("airline") or item.get("cheapest_source"),
@@ -621,15 +630,23 @@ async def flight_search(request: FlightRequest) -> dict[str, Any]:
         base.extend(["--max-price", str(request.max_price)])
 
     semaphore = asyncio.Semaphore(FLIGHT_PROVIDER_CONCURRENCY)
+    await fx.ensure_rates()
 
     async def run_group(providers: tuple[str, ...]):
-        tasks = [
-            asyncio.create_task(_run_provider_json(
-                provider, base + ["--provider", provider], FLIGHT_PROVIDER_TIMEOUT, semaphore
-            ))
-            for provider in providers
-        ]
+        tasks = [asyncio.create_task(run_one(provider)) for provider in providers]
         return await asyncio.gather(*tasks)
+
+    async def run_one(provider: str):
+        if provider == "skiplagged" and os.environ.get("FLIGHT_NATIVE", "1") != "0":
+            started = time.monotonic()
+            native = await skiplagged.flights(
+                request.origin_iata, request.destination_iata, request.departure_date, request.return_date,
+                request.adults, request.cabin, request.stops,
+            )
+            if native.get("ok"):
+                return provider, native, time.monotonic() - started
+            # Direkter Weg fehlgeschlagen (zum Beispiel Ratenbegrenzung): wie bisher über trvl.
+        return await _run_provider_json(provider, base + ["--provider", provider], FLIGHT_PROVIDER_TIMEOUT, semaphore)
 
     # Erste Welle: breit nutzbarer Aggregator plus die typischen europäischen
     # Low-Cost-Provider. Die zweite Welle startet nur, wenn noch zu wenige
@@ -863,6 +880,23 @@ async def hotel_search(request: HotelRequest) -> dict[str, Any]:
 
     attempts: list[dict[str, Any]] = []
 
+    options: list[dict[str, Any]] = []
+    if os.environ.get("HOTEL_NATIVE", "1") != "0" and request.property_type in ("hotel", "any"):
+        # Zuerst der offene Dienst von Skiplagged: echte Hotels mit Nacht- und Gesamtpreis, ohne trvl.
+        started = time.monotonic()
+        native = await skiplagged.hotels(request.location, request.checkin_date, request.checkout_date, request.adults)
+        native_options = _normalize_property_types([
+            item for item in compact_hotel_options(
+                native.get("data") if native.get("ok") else None, max(request.max_results * 5, request.max_results),
+            )
+            if _hotel_option_matches(item, request.min_stars, request.property_type)
+        ], request.property_type)
+        attempts.append(_command_status("skiplagged_hotels", native, time.monotonic() - started, len(native_options)))
+        options = native_options[: request.max_results]
+
+    if options:
+        return _hotel_result(request, options, attempts)
+
     # Zuerst die vollständige Suche mit Zimmerpreisen. Sie hat ein hartes Limit.
     started = time.monotonic()
     enriched = await asyncio.to_thread(run_json_command, base, HOTEL_ENRICH_TIMEOUT)
@@ -911,6 +945,10 @@ async def hotel_search(request: HotelRequest) -> dict[str, Any]:
                 if len(options) >= request.max_results:
                     break
 
+    return _hotel_result(request, options, attempts)
+
+
+def _hotel_result(request: HotelRequest, options: list[dict[str, Any]], attempts: list[dict[str, Any]]) -> dict[str, Any]:
     manual_url = build_google_hotels_url(request.location, request.checkin_date, request.checkout_date)
     return {
         "status": "ok" if options else "manual_required",
@@ -926,6 +964,7 @@ async def hotel_search(request: HotelRequest) -> dict[str, Any]:
             "Headline- oder Nachtpreise bleiben als nicht vollständig verifiziert markiert."
         ),
     }
+
 
 def _ground_stop(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
