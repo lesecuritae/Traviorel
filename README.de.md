@@ -88,6 +88,24 @@ Nach einer erfolgreichen Suche lädt Traviorel aktuelle amtliche Warnungen von N
 
 Die Warnungen verändern weder Verbindung, Ranking noch Preis und lösen keine automatische Umplanung aus. Listen, Geometrien und Details werden fünf Minuten gecacht. Ist der Dienst nicht erreichbar oder liegt keine passende Warnung vor, bleibt die Reiseausgabe unverändert.
 
+## MCP-Server für KI-Assistenten
+
+Traviorel bringt unter `/mcp` (Streamable HTTP) einen MCP-Server mit. Ein Assistent kann damit Reisen suchen und zu einer Verbindung nachfragen. Nur Lesen: Traviorel bucht nichts.
+
+| Werkzeug | Was es tut |
+|---|---|
+| `search_ground` | Bahn, Nahverkehr, FlixBus und FlixTrain mit Preisen; jede Verbindung bekommt eine `ref` |
+| `plan_flight_trip` | Flugreise mit Anreise, Flug, Hotel, Transfers und Gesamtkosten |
+| `price_calendar_search` | günstigster Tag über mehrere Tage |
+| `mobile_coverage` | Mobilfunk entlang einer Verbindung (Bundesnetzagentur, OpenCellID) |
+| `travel_warnings` | aktuelle amtliche Warnungen (NINA/BBK) entlang einer Verbindung |
+| `delay_history` | historische Pünktlichkeit je Zug und Halt, Anschluss-Chance beim Umsteigen |
+| `find_station` | Bahnhöfe und Haltestellen zu einem Namen |
+
+- **Verspätungsindex:** Die historischen Verspätungen stammen aus dem offenen Datensatz `piebro/deutsche-bahn-data` (CC BY 4.0). Beim ersten `delay_history` baut Traviorel im Hintergrund einen kleinen lokalen Index der letzten Monate auf (etwa 2 Minuten und 600 MB Download je Monat, einmalig; `DELAY_INDEX_MONTHS`, Standard 3). Danach antwortet die Abfrage sofort. Abschalten mit `DELAY_INDEX=0`.
+- **Einrichtung:** Adresse `https://<dein-server>/mcp`. In Open WebUI: Admin-Bereich → Einstellungen → Externe Werkzeuge → hinzufügen, Typ „MCP (Streamable HTTP)“.
+- Abschalten: `TRAVIOREL_MCP=0`.
+
 ## trvl ist optional
 
 Bahn, Flix, Flüge, Hotels und Flughafen-Transfers laufen über eigene Direktwege (DB-Logik, Flix, Skiplagged, Transitous). Mit `TRVL_ENABLED=0` oder dem Image `traviorel-app-lite` läuft Traviorel ganz ohne trvl. Dann fehlen nur Taxi-Schätzungen und Anbieter, die es nur über trvl gibt. Solange trvl im Image ist, ist es zusätzlich ein Rückfall, wenn ein Direktweg ausfällt.

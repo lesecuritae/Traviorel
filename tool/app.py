@@ -8,6 +8,9 @@ from fastapi import Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+import contextlib
+import os
+
 from db_cffi_bridge import router as db_cffi_router
 from reisevergleich import router as reisevergleich_router
 from reisevergleich.config import APP_VERSION
@@ -17,11 +20,29 @@ ROOT = Path(__file__).resolve().parent
 UI = ROOT / "ui"
 
 
+def _mcp_app():
+    """MCP-Server unter /mcp (nur lesend); mit TRAVIOREL_MCP=0 abschaltbar."""
+    if os.environ.get("TRAVIOREL_MCP", "1") == "0":
+        return None
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    from reisevergleich.mcp_server import mcp
+
+    security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
+    return mcp, mcp.streamable_http_app(streamable_http_path="/mcp", stateless_http=True, transport_security=security)
+
+
+_mcp = _mcp_app()
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     scheduler = start_scheduler()
     try:
-        yield
+        async with contextlib.AsyncExitStack() as stack:
+            if _mcp is not None:
+                await stack.enter_async_context(_mcp[1].router.lifespan_context(_mcp[0]))
+            yield
     finally:
         await stop_scheduler(scheduler)
 
@@ -35,6 +56,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(reisevergleich_router)
+if _mcp is not None:
+    from starlette.routing import Route
+
+    class _McpEndpoint:
+        """Reicht /mcp an den MCP-Server weiter (ohne Weiterleitung auf /mcp/)."""
+
+        async def __call__(self, scope, receive, send):
+            await _mcp[1](scope, receive, send)
+
+    app.router.routes.append(Route("/mcp", _McpEndpoint(), methods=["GET", "POST", "DELETE"]))
 app.include_router(db_cffi_router)
 app.mount("/assets", StaticFiles(directory=UI), name="assets")
 

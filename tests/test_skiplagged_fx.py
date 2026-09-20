@@ -49,3 +49,14 @@ ibis = next(item for item in compact if item["name"] == "Ibis Roma Fiera")
 assert ibis["nightly_price"] == 79.13 and ibis["verified_total_price"] == 296.52 and ibis["currency"] == "EUR"
 assert compact[0]["name"] == "Ohne Bewertung", "günstigster Gesamtpreis zuerst"
 print("Skiplagged-Flüge/-Hotels und EZB-Umrechnung: OK")
+
+# ---- Hotels: nur die gesuchte Stadt („Rom“ lieferte Hotels bei Detroit) ----------------------------------
+assert skiplagged.city_query("Rom") == "Rome" and skiplagged.city_query("Rome, Italien") == "Rome" and skiplagged.city_query("München") == "Munich"
+assert skiplagged.city_query("Paris") == "Paris" and skiplagged.city_query("New York") == "New York"
+mixed = [
+    {"name": "Ibis", "booking_url": "https://skiplagged.com/hotel/1/ibis-roma-fiera-rome-italy/2026-10-20/2026-10-23?x=1"},
+    {"name": "Wyndham Romulus", "booking_url": "https://skiplagged.com/hotel/2/wyndham-garden-romulus-detroit-metro-airport-romulus-united-states/2026-10-20/2026-10-23"},
+]
+assert [h["name"] for h in skiplagged.only_requested_city(mixed, "Rome")] == ["Ibis"]
+assert skiplagged.only_requested_city(mixed[1:], "Rome") == [], "ohne Treffer in der Stadt bleibt es leer (dann greift trvl)"
+print("Skiplagged-Hotels prüfen die Stadt: OK")

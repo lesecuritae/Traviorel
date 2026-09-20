@@ -16,6 +16,7 @@ import time
 import urllib.error
 import urllib.request
 from typing import Any
+from urllib.parse import urlsplit
 
 from . import fx
 
@@ -216,16 +217,45 @@ def hotels_to_eur(hotels: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return output
 
 
+_MORE_ALIASES = {
+    "münchen": "munich", "muenchen": "munich", "köln": "cologne", "koeln": "cologne", "nürnberg": "nuremberg", "nuernberg": "nuremberg",
+    "hannover": "hanover", "florenz": "florence", "genf": "geneva", "zürich": "zurich", "zuerich": "zurich", "brügge": "bruges",
+    "frankfurt am main": "frankfurt", "lüttich": "liege", "sevilla": "seville", "moskau": "moscow", "warschau": "warsaw",
+}
+
+
+def city_query(location: str) -> str:
+    """Englischer Stadtname für die Skiplagged-Suche („Rom“ → „Rome“): Der Dienst gleicht Namen unscharf ab und lieferte
+    für „Rom“ Hotels in Romulus bei Detroit."""
+    from .airports import GERMAN_CITY_ALIASES
+
+    city = re.split(r"[,(]", str(location or ""), maxsplit=1)[0].strip()
+    key = re.sub(r"\s+", " ", city.casefold())
+    english = {**GERMAN_CITY_ALIASES, **_MORE_ALIASES}.get(key, city)
+    return english.title() if english.islower() else english
+
+
+def _slug(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.casefold().replace("ß", "ss").replace("ä", "a").replace("ö", "o").replace("ü", "u")).strip("-")
+
+
+def only_requested_city(hotels: list[dict[str, Any]], city: str) -> list[dict[str, Any]]:
+    """Behält Hotels, deren Adresse bei Skiplagged den Stadtnamen enthält (``…-rome-italy``); alles andere ist ein Fehltreffer."""
+    needle = f"-{_slug(city)}-"
+    return [hotel for hotel in hotels if needle in (urlsplit(str(hotel.get("booking_url") or "")).path + "-")]
+
+
 async def hotels(location: str, checkin: str, checkout: str, adults: int, limit: int = 30) -> dict[str, Any]:
     """Wie ``run_json_command``: ``{"ok": bool, "data": {"hotels": [...]}, "error": ...}``."""
     from datetime import date
     nights = max(0, (date.fromisoformat(checkout) - date.fromisoformat(checkin)).days)
+    city = city_query(location)
     try:
         await fx.ensure_rates()
-        text = await call_tool("sk_hotels_search", {"city": location, "checkin": checkin, "checkout": checkout, "numAdults": max(1, adults), "sort": "price", "limit": min(limit, 100)})
+        text = await call_tool("sk_hotels_search", {"city": city, "checkin": checkin, "checkout": checkout, "numAdults": max(1, adults), "sort": "price", "limit": min(limit, 100)})
     except (SkiplaggedError, json.JSONDecodeError, ValueError) as exc:
         return {"ok": False, "error": f"Skiplagged: {exc}"}
-    found = hotels_to_eur(parse_hotels(text, nights))
+    found = hotels_to_eur(only_requested_city(parse_hotels(text, nights), city))
     if not found:
-        return {"ok": False, "error": "Skiplagged lieferte keine auswertbaren Hotels"}
+        return {"ok": False, "error": f"Skiplagged lieferte keine Hotels in {city}"}
     return {"ok": True, "data": {"success": True, "hotels": found}, "raw": {}}
