@@ -17,6 +17,7 @@ from .config import (
     MAX_HOTEL_NIGHTLY_EUR, MAX_HOTEL_TOTAL_EUR, TRANSFER_PROVIDER_CONCURRENCY,
     TRANSFER_PROVIDER_TIMEOUT, TRVL_BIN,
 )
+from . import flix_api
 from .models import FlightRequest, HotelRequest, ReiseRequest
 from .db import rank_routes
 from .airports import AIRPORT_TRANSIT_QUERIES, CITY_TRANSIT_QUERIES
@@ -1034,7 +1035,14 @@ async def flix_search(request: ReiseRequest) -> dict[str, Any]:
         "--format", "json",
     ]
     started = time.monotonic()
-    result = await asyncio.to_thread(run_json_command, command, GROUND_PROVIDER_TIMEOUT)
+    source = "flix-api"
+    result: dict[str, Any] = {"ok": False}
+    if os.environ.get("FLIX_NATIVE", "1") != "0":
+        result = await flix_api.search(origin_query, destination_query, request.travel_date)
+    if not result.get("ok") or not (result.get("data") or {}).get("routes"):
+        # Direkte Flix-Abfrage ohne Ergebnis oder fehlgeschlagen: wie bisher über trvl.
+        source = "trvl"
+        result = await asyncio.to_thread(run_json_command, command, GROUND_PROVIDER_TIMEOUT)
     elapsed = time.monotonic() - started
     routes = compact_ground_options(
         result.get("data") if result.get("ok") else None,
@@ -1183,7 +1191,7 @@ async def flix_search(request: ReiseRequest) -> dict[str, Any]:
         },
         "raw_route_count": len(routes),
         "station_metadata_resolved": bool(station_directory),
-        "provider_status": _command_status("flixbus", result, elapsed, len(routes)),
+        "provider_status": {**_command_status("flixbus", result, elapsed, len(routes)), "source": source},
         "error": None if selected else result.get("error"),
     }
 
