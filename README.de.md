@@ -99,6 +99,7 @@ Traviorel bringt unter `/mcp` (Streamable HTTP) einen MCP-Server mit. Ein Assist
 | `price_calendar_search` | günstigster Tag über mehrere Tage |
 | `mobile_coverage` | Mobilfunk entlang einer Verbindung (Bundesnetzagentur, OpenCellID) |
 | `travel_warnings` | aktuelle amtliche Warnungen (NINA/BBK) entlang einer Verbindung |
+| `live_delays` | aktuelle Verspätungen, Ausfälle und Gleise einer Bahnverbindung (Echtzeit, nur kurz vor und während der Fahrt) |
 | `delay_history` | historische Pünktlichkeit je Zug und Halt, Anschluss-Chance beim Umsteigen |
 | `price_history` | wie sich der Preis einer Strecke entwickelt hat (Verlauf einer Fahrt oder Übersicht nach Vorlauf) |
 | `watch_route`, `list_watched_routes`, `stop_watching` | bis zu 5 Bodenstrecken täglich beobachten, damit der Preisverlauf wächst |

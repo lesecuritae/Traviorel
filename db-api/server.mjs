@@ -610,6 +610,15 @@ function normalizeStopover(stopover) {
   };
 }
 
+// Verspätung in Minuten: aus den Sekunden der Auskunft, sonst aus Ist- gegen Plan-Zeit.
+function delayMinutes(seconds, actual, planned) {
+  const direct = Number(seconds);
+  if (seconds != null && Number.isFinite(direct)) return Math.round(direct / 60);
+  const a = dateValue(actual)?.getTime();
+  const b = dateValue(planned)?.getTime();
+  return Number.isFinite(a) && Number.isFinite(b) ? Math.round((a - b) / 60000) : null;
+}
+
 function normalizeLeg(leg) {
   return {
     trip_id: leg?.tripId ? String(leg.tripId) : null,
@@ -631,6 +640,10 @@ function normalizeLeg(leg) {
     departure: isoValue(plannedDeparture(leg)),
     arrival: isoValue(plannedArrival(leg)),
     cancelled: Boolean(leg?.cancelled),
+    departure_delay_minutes: delayMinutes(leg?.departureDelay, leg?.departure, leg?.plannedDeparture),
+    arrival_delay_minutes: delayMinutes(leg?.arrivalDelay, leg?.arrival, leg?.plannedArrival),
+    platform: leg?.departurePlatform || null,
+    planned_platform: leg?.plannedDeparturePlatform || null,
     walking: Boolean(leg?.walking),
     stopovers: Array.isArray(leg?.stopovers) ? leg.stopovers.map(normalizeStopover) : [],
   };

@@ -67,4 +67,50 @@ except ValueError as exc:
     assert "Suche noch einmal" in str(exc)
 else:
     raise AssertionError("unbekannte ref muss abgelehnt werden")
+
+# ---- Index in der Weboberfläche: gleiche Form wie die alte Abfrage, Anschluss-Chance aus der Verteilung ------------
+from reisevergleich import history  # noqa: E402
+
+idx = history.index_statistics(stats)
+assert idx["status"] == "ok" and idx["quality"] == "limited" and idx["fallback_level"] == "index" and idx["explicit_cancellations"] == 1
+assert abs(idx["direct_reliability_rate"] - 7 / 11) < 0.001, idx["direct_reliability_rate"]
+assert idx["on_time_5_rate"] == 0.5 and idx["on_time_10_rate"] == 0.7 and "_cdf" in idx
+incoming = {"reliability": idx, "arrival": "2026-10-06T09:24+02:00", "destination": {"name": "Hamburg Hbf"}}
+connection = history._connection(incoming, {"departure": "2026-10-06T09:44+02:00"})  # 20 Minuten Umstieg
+assert connection["status"] == "ok" and connection["percent"] == 82 and connection["method"] == "index_arrival_cdf", connection
+tight = history._connection(incoming, {"departure": "2026-10-06T09:29+02:00"})  # 5 Minuten: nur 5 von 11 Halten pünktlich genug
+assert tight["percent"] == 45, tight
+assert delay_index.share_within([(0, .4), (5, .7), (10, .9)], 7.5) == 0.8 and delay_index.share_within([(0, .4)], -1) == 0.0
+
+async def enriched():
+    route = {"legs": [dict(leg1, origin_id="8010205", destination_id="8002549")]}  # nur ein Zug im Index: kein Netzzugriff im Test
+    return (await history.enrich_routes_history([route]))[0]
+
+route = asyncio.run(enriched())
+assert route["legs"][0]["reliability"]["fallback_level"] == "index", route["legs"][0]["reliability"]
+
+# ---- aktuelle Verspätungen -------------------------------------------------------------------------------------
+late = {"provider": "Deutsche Bahn", "type": "train", "origin": "Leipzig Hbf", "destination": "Berlin Hbf", "departure": "2026-09-20T18:51+02:00", "arrival": "2026-09-20T20:05+02:00",
+        "duration_minutes": 74, "transfers": 0, "price": 70.1, "legs": [{"mode": "train", "line_name": "ICE 90", "train_number": "90", "train_type": "ICE", "origin": "Leipzig Hbf", "destination": "Berlin Hbf",
+        "departure": "2026-09-20T18:51+02:00", "arrival": "2026-09-20T20:05+02:00", "departure_delay_minutes": 35, "arrival_delay_minutes": 34, "platform": "14", "planned_platform": "12"}]}
+assert mcp_server._live_summary(late) == " – aktuell +34 min am Ziel"
+assert mcp_server._live_summary({"legs": [{"cancelled": True}]}) == " – ein Zug fällt aus" and mcp_server._live_summary({"legs": [{"arrival_delay_minutes": 0}]}) == ""
+assert mcp_server._live_summary({"legs": [{"arrival_delay_minutes": None}]}) == "" and mcp_server._live_summary({}) == ""
+
+seen = []
+
+
+async def fake_search(request):
+    seen.append((request.refresh_cache, request.departure_date, request.departure_after))
+    return {"response_context": {"outbound": {"connections": [late, {**late, "departure": "2026-09-20T19:16+02:00", "legs": [{**late["legs"][0], "train_number": "596"}]}]}}}
+
+original_search = mcp_server.search
+mcp_server.search = fake_search
+live_ref = mcp_server._remember([late])[0]
+text = asyncio.run(mcp_server.live_delays(live_ref)).content[0].text
+assert seen == [(True, "2026-09-20", "18:31")], seen
+assert "ICE 90: Abfahrt 18:51 +35 min (erwartet 19:26), Ankunft 20:05 +34 min (erwartet 20:39), Gleis 14 (geplant 12)" in text, text
+gone = mcp_server._remember([{**late, "departure": "2026-09-20T17:00+02:00"}])[0]
+assert "nicht mehr bei der Bahn" in asyncio.run(mcp_server.live_delays(gone)).content[0].text
+mcp_server.search = original_search
 print("Verspätungsindex und MCP-Hilfen: OK")

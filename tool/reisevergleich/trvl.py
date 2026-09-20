@@ -603,11 +603,23 @@ def _merge_flight_options(options: list[dict[str, Any]], max_results: int) -> li
 
     rows = list(merged.values())
     rows.sort(key=lambda item: (
+        _flight_rank_cost(item),
         as_float(item.get("price")) or 1_000_000,
         as_int(item.get("duration_minutes")) or 1_000_000,
         as_int(item.get("stops")),
     ))
     return rows[:max_results]
+
+
+# Ausgewogene Reihenfolge statt „nur der Preis“: Ein Flug mit zwei Zwischenstopps und zwölf Stunden Reisezeit ist nicht 100 Euro
+# günstiger als ein Direktflug, sondern meist schlechter. Jeder Zwischenstopp und jede Stunde bekommen einen Aufschlag; der angezeigte
+# Preis bleibt der echte. Beide Werte auf 0 stellen (FLIGHT_STOP_PENALTY_EUR, FLIGHT_HOUR_VALUE_EUR), dann zählt nur der Preis.
+def _flight_rank_cost(item: dict[str, Any]) -> float:
+    price = as_float(item.get("price")) or 1_000_000.0
+    stop_penalty = float(os.environ.get("FLIGHT_STOP_PENALTY_EUR", "35"))
+    hour_value = float(os.environ.get("FLIGHT_HOUR_VALUE_EUR", "12"))
+    hours = (as_int(item.get("duration_minutes")) or 0) / 60
+    return round(price + stop_penalty * as_int(item.get("stops")) + hour_value * hours, 2)
 
 
 async def flight_search(request: FlightRequest) -> dict[str, Any]:

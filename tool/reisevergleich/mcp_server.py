@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import secrets
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import OrderedDict
 from typing import Any
 
@@ -113,12 +113,22 @@ def _connection_line(ref: str, connection: dict[str, Any]) -> str:
     names = [str(leg.get("line_name") or leg.get("line") or leg.get("train_type") or "") for leg in legs if leg.get("mode") not in {"walking", "walk"}]
     lines = ", ".join(dict.fromkeys(name for name in names if name and len(name) <= 24 and "'" not in name)) if provider in {"Deutsche Bahn", "Transitous"} else ""
     lines = lines or ("Bus" if connection.get("type") == "bus" else "Zug" if connection.get("type") == "train" else "")
+    live = _live_summary(connection)
     price = _euro(connection["price"]) if connection.get("price") is not None else "Preis offen"
     note = f" – {connection['price_note']}" if connection.get("price_note") and connection.get("price") is None else ""
     return (
         f"- [{ref}] {connection.get('provider', '')} {lines}: {_hm(connection.get('departure'))} → {_hm(connection.get('arrival'))} "
-        f"({_duration(connection.get('duration_minutes'))}, {connection.get('transfers', 0)} Umstiege), {price}{note}"
+        f"({_duration(connection.get('duration_minutes'))}, {connection.get('transfers', 0)} Umstiege), {price}{note}{live}"
     )
+
+
+def _live_summary(connection: dict[str, Any]) -> str:
+    """Kurzer Echtzeit-Zusatz für eine Zeile: „ – aktuell +7 min“ oder „ – Zug fällt aus“ (nur wenn Angaben vorliegen)."""
+    legs = [leg for leg in connection.get("legs") or [] if isinstance(leg, dict)]
+    if any(leg.get("cancelled") for leg in legs):
+        return " – ein Zug fällt aus"
+    delays = [leg["arrival_delay_minutes"] for leg in legs if isinstance(leg.get("arrival_delay_minutes"), (int, float))]
+    return f" – aktuell {'+' if delays[-1] > 0 else ''}{int(delays[-1])} min am Ziel" if delays and delays[-1] != 0 else ""
 
 
 def _text(text: str, structured: dict[str, Any]) -> CallToolResult:
@@ -248,6 +258,56 @@ async def price_calendar_search(origin: str, destination: str, date: str, days: 
     if not rows:
         lines.append("Keine Preise gefunden.")
     return _text("\n".join(lines), {"cheapest_date": cheapest, "days": rows})
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
+async def live_delays(ref: str) -> CallToolResult:
+    """Aktuelle Verspätungen einer Bahnverbindung: je Zug Abfahrt und Ankunft (Plan und erwartet), Ausfall und Gleis. Fragt die Deutsche Bahn frisch ab;
+    Echtzeitangaben gibt es nur kurz vor und während der Fahrt (heute und morgen).
+
+    Args:
+        ref: Nummer einer Verbindung aus search_ground.
+    """
+    connection = _connection(ref)
+    departure = str(connection.get("departure") or "")
+    try:  # etwas früher ansetzen, damit die Fahrt sicher im Suchfenster liegt
+        window_start = (datetime.fromisoformat(departure) - timedelta(minutes=20)).strftime("%H:%M")
+    except ValueError:
+        window_start = "00:00"
+    request = TripRequest(
+        travel_mode="ground", journey_type="one_way", origin=str(connection.get("origin") or ""), destination=str(connection.get("destination") or ""),
+        departure_date=departure[:10], departure_after=window_start, include_hotel=False, include_feeder=False, refresh_cache=True,
+    )
+    fresh = [c for c in _find_connections(await search(request)) if c.get("provider") == connection.get("provider")]
+    numbers = [str(leg.get("train_number")) for leg in connection.get("legs") or [] if isinstance(leg, dict) and leg.get("train_number")]
+    match = next((c for c in fresh if [str(leg.get("train_number")) for leg in c.get("legs") or [] if isinstance(leg, dict) and leg.get("train_number")] == numbers and c.get("departure") == connection.get("departure")), None)
+    if match is None:
+        return _text("Diese Verbindung finde ich gerade nicht mehr bei der Bahn (Fahrt vorbei oder geändert). Bitte neu suchen.", {"legs": []})
+    rows, lines = [], [f"Aktuell {match.get('origin')} → {match.get('destination')}:"]
+    for leg in [leg for leg in match.get("legs") or [] if isinstance(leg, dict) and leg.get("mode") != "walking"]:
+        dep, arr = leg.get("departure_delay_minutes"), leg.get("arrival_delay_minutes")
+        name = leg.get("line_name") or leg.get("line") or ""
+        if leg.get("cancelled"):
+            lines.append(f"- {name} {_hm(leg.get('departure'))} {leg.get('origin')} → {leg.get('destination')}: fällt aus.")
+        elif dep is None and arr is None:
+            lines.append(f"- {name} {_hm(leg.get('departure'))} → {_hm(leg.get('arrival'))}: keine Echtzeitangaben (die Fahrt liegt zu weit in der Zukunft oder die Bahn liefert noch keine).")
+        else:
+            def fmt(value, planned_time=None):
+                if not value:
+                    return "pünktlich"
+                expected = ""
+                try:
+                    expected = f" (erwartet {(datetime.fromisoformat(str(planned_time)) + timedelta(minutes=value)).strftime('%H:%M')})"
+                except ValueError:
+                    pass
+                return f"{'+' if value > 0 else ''}{int(value)} min{expected}"
+            platform = leg.get("platform")
+            planned = leg.get("planned_platform")
+            gleis = f", Gleis {platform}" + (f" (geplant {planned})" if planned and planned != platform else "") if platform else ""
+            lines.append(f"- {name}: Abfahrt {_hm(leg.get('departure'))} {fmt(dep, leg.get('departure'))}, Ankunft {_hm(leg.get('arrival'))} {fmt(arr, leg.get('arrival'))}{gleis}")
+        rows.append({"line": name, "departure": leg.get("departure"), "arrival": leg.get("arrival"), "departure_delay_minutes": dep, "arrival_delay_minutes": arr,
+                     "cancelled": bool(leg.get("cancelled")), "platform": leg.get("platform"), "planned_platform": leg.get("planned_platform")})
+    return _text("\n".join(lines), {"legs": rows})
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))

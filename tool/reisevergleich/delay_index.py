@@ -37,20 +37,24 @@ _lock = threading.Lock()
 _state: dict[str, Any] = {"running": False, "current": None, "done": [], "error": None}
 
 
+THRESHOLDS = (0, 2, 5, 10, 15, 20, 30, 45, 60)  # Minuten; aus den Zählungen entsteht eine grobe Verteilung der Ankunftsverspätung
+
+
 def _db_path() -> Path:
-    return Path(os.environ.get("DELAY_INDEX_DB", str(Path(HISTORY_CACHE_DIR) / "delay-index.sqlite3")))
+    return Path(os.environ.get("DELAY_INDEX_DB", str(Path(HISTORY_CACHE_DIR) / "delay-index-v2.sqlite3")))
 
 
 def _connect() -> sqlite3.Connection:
     path = _db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path, timeout=30)
+    columns = ", ".join(f"c{t} INTEGER NOT NULL" for t in THRESHOLDS)
     db.executescript(
-        """
+        f"""
         CREATE TABLE IF NOT EXISTS months(month TEXT PRIMARY KEY, built_at REAL NOT NULL, rows INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS stats(
             month TEXT NOT NULL, train_type TEXT NOT NULL, train_number TEXT NOT NULL, eva TEXT NOT NULL,
-            n INTEGER NOT NULL, cancelled INTEGER NOT NULL, sum_delay REAL NOT NULL, n5 INTEGER NOT NULL, n10 INTEGER NOT NULL, n30 INTEGER NOT NULL,
+            n INTEGER NOT NULL, cancelled INTEGER NOT NULL, sum_delay REAL NOT NULL, {columns},
             PRIMARY KEY(month, train_type, train_number, eva)
         ) WITHOUT ROWID;
         CREATE INDEX IF NOT EXISTS stats_by_train ON stats(train_type, train_number, eva);
@@ -92,15 +96,17 @@ def _aggregate_month(month: str) -> list[tuple]:
         con.execute("SET http_timeout=300")
         con.execute("SET threads=2")
         con.execute("SET memory_limit='1GB'")
+        counts = ",\n                   ".join(
+            f"sum(CASE WHEN NOT coalesce(arrival_is_canceled, false) AND date_diff('minute', arrival_planned_time, arrival_change_time) <= {t} THEN 1 ELSE 0 END) AS c{t}"
+            for t in THRESHOLDS
+        )
         return con.execute(
             f"""
             SELECT train_type, train_number, ltrim(eva, '0') AS eva,
                    count(*) AS n,
                    sum(CASE WHEN coalesce(arrival_is_canceled, false) THEN 1 ELSE 0 END) AS cancelled,
                    sum(CASE WHEN NOT coalesce(arrival_is_canceled, false) THEN date_diff('second', arrival_planned_time, arrival_change_time) / 60.0 ELSE 0 END) AS sum_delay,
-                   sum(CASE WHEN NOT coalesce(arrival_is_canceled, false) AND date_diff('minute', arrival_planned_time, arrival_change_time) <= 5 THEN 1 ELSE 0 END) AS n5,
-                   sum(CASE WHEN NOT coalesce(arrival_is_canceled, false) AND date_diff('minute', arrival_planned_time, arrival_change_time) <= 10 THEN 1 ELSE 0 END) AS n10,
-                   sum(CASE WHEN NOT coalesce(arrival_is_canceled, false) AND date_diff('minute', arrival_planned_time, arrival_change_time) <= 30 THEN 1 ELSE 0 END) AS n30
+                   {counts}
             FROM read_parquet('{source}')
             WHERE train_type IN ({types}) AND arrival_planned_time IS NOT NULL AND arrival_change_time IS NOT NULL
             GROUP BY 1, 2, 3
@@ -114,7 +120,7 @@ def build_month(month: str) -> int:
     rows = _aggregate_month(month)
     with _connect() as db:
         db.execute("DELETE FROM stats WHERE month = ?", (month,))
-        db.executemany("INSERT INTO stats VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [(month, *row) for row in rows])
+        db.executemany(f"INSERT INTO stats VALUES ({','.join('?' * (7 + len(THRESHOLDS)))})", [(month, *row) for row in rows])
         db.execute("INSERT OR REPLACE INTO months VALUES (?, ?, ?)", (month, time.time(), len(rows)))
         keep = wanted_months(count=MONTHS)
         db.execute(f"DELETE FROM stats WHERE month NOT IN ({','.join('?' * len(keep))})", keep)
@@ -175,23 +181,41 @@ def status() -> dict[str, Any]:
 
 
 def _stats_query(train_type: str, train_number: str, eva: str) -> dict[str, Any] | None:
+    sums = ", ".join(f"sum(c{t})" for t in THRESHOLDS)
     with _connect() as db:
         row = db.execute(
-            "SELECT sum(n), sum(cancelled), sum(sum_delay), sum(n5), sum(n10), sum(n30), min(month), max(month) FROM stats "
+            f"SELECT sum(n), sum(cancelled), sum(sum_delay), min(month), max(month), {sums} FROM stats "
             "WHERE train_type = ? AND train_number = ? AND eva = ?",
             (str(train_type).upper(), str(train_number).strip(), str(eva).strip().lstrip("0")),
         ).fetchone()
     if not row or not row[0]:
         return None
-    n, cancelled, sum_delay, n5, n10, n30, first, last = row
+    n, cancelled, sum_delay, first, last, *counts = row
     ran = n - cancelled
     if ran <= 0:
         return {"events": n, "cancelled_percent": 100.0, "months": [first, last]}
+    by_threshold = dict(zip(THRESHOLDS, counts, strict=True))
     return {
-        "events": int(n), "ran": int(ran), "cancelled_percent": round(100 * cancelled / n, 1), "average_delay_minutes": round(sum_delay / ran, 1),
-        "on_time_5_percent": round(100 * n5 / ran), "on_time_10_percent": round(100 * n10 / ran), "within_30_percent": round(100 * n30 / ran),
-        "months": [first, last],
+        "events": int(n), "ran": int(ran), "cancelled": int(cancelled), "cancelled_percent": round(100 * cancelled / n, 1),
+        "average_delay_minutes": round(sum_delay / ran, 1),
+        "on_time_5_percent": round(100 * by_threshold[5] / ran), "on_time_10_percent": round(100 * by_threshold[10] / ran),
+        "within_30_percent": round(100 * by_threshold[30] / ran), "months": [first, last],
+        # Anteil aller Halte (Ausfälle zählen als nicht erreicht), der höchstens so viele Minuten verspätet ankommt
+        "cdf": [(t, by_threshold[t] / n) for t in THRESHOLDS],
     }
+
+
+def share_within(cdf: list[tuple[int, float]], minutes: float) -> float:
+    """Anteil der Halte mit höchstens ``minutes`` Verspätung (linear zwischen den gezählten Schwellen; darüber der letzte Wert)."""
+    if minutes < 0 or not cdf:
+        return 0.0
+    previous = (-1, 0.0)
+    for threshold, share in cdf:
+        if minutes <= threshold:
+            span = threshold - previous[0]
+            return previous[1] + (share - previous[1]) * ((minutes - previous[0]) / span if span else 1.0)
+        previous = (threshold, share)
+    return cdf[-1][1]
 
 
 async def arrival_stats(train_type: str, train_number: str, eva: str) -> dict[str, Any] | None:

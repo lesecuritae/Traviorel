@@ -1,3 +1,4 @@
+import os
 from reisevergleich import fx, skiplagged
 from reisevergleich.trvl import compact_flight_options, compact_hotel_options
 
@@ -60,3 +61,24 @@ mixed = [
 assert [h["name"] for h in skiplagged.only_requested_city(mixed, "Rome")] == ["Ibis"]
 assert skiplagged.only_requested_city(mixed[1:], "Rome") == [], "ohne Treffer in der Stadt bleibt es leer (dann greift trvl)"
 print("Skiplagged-Hotels prüfen die Stadt: OK")
+
+# ---- Flug-Reihenfolge: ausgewogen statt nur billigster --------------------------------------------------
+from reisevergleich.trvl import _merge_flight_options  # noqa: E402
+
+
+def _flight(price, stops, minutes, number):
+    leg = {"departure_airport": "LEJ", "arrival_airport": "FCO", "departure": f"2026-10-20T0{number}:00+02:00", "arrival": f"2026-10-20T1{number}:00+02:00"}
+    return {"price": price, "duration_minutes": minutes, "stops": stops, "provider": "skiplagged",
+            "outbound": {"departure_airport": "LEJ", "arrival_airport": "FCO", "departure": leg["departure"], "arrival": leg["arrival"], "stops": stops, "legs": [leg]}}
+
+
+cheap_but_long = _flight(391.8, 2, 12 * 60, 1)
+direct = _flight(470.0, 0, 130, 2)
+one_stop = _flight(430.0, 1, 5 * 60, 3)
+ranked = _merge_flight_options([cheap_but_long, one_stop, direct], 5)
+assert [item["price"] for item in ranked] == [470.0, 430.0, 391.8], [item["price"] for item in ranked]
+os.environ["FLIGHT_STOP_PENALTY_EUR"] = "0"
+os.environ["FLIGHT_HOUR_VALUE_EUR"] = "0"
+assert [item["price"] for item in _merge_flight_options([cheap_but_long, one_stop, direct], 5)] == [391.8, 430.0, 470.0], "ohne Aufschläge zählt nur der Preis"
+del os.environ["FLIGHT_STOP_PENALTY_EUR"], os.environ["FLIGHT_HOUR_VALUE_EUR"]
+print("Flüge werden nach Preis, Zwischenstopps und Reisezeit gereiht: OK")

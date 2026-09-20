@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterable
 
+from . import delay_index
 from .cache import CACHE_SCHEMA, cached_call
 from .config import (
     HISTORY_DEFAULT_WINDOW_DAYS, HISTORY_ENABLED, HISTORY_MAX_CONCURRENCY,
@@ -174,6 +175,29 @@ def calculate_statistics(
     return {key: round(value, 3) if isinstance(value, float) else value for key, value in result.items() if value is not None}
 
 
+def index_statistics(stats: dict[str, Any]) -> dict[str, Any]:
+    """Statistik aus dem lokalen Verspätungsindex in derselben Form wie ``calculate_statistics``."""
+    events, ran, cancelled = int(stats["events"]), int(stats["ran"]), int(stats.get("cancelled", 0))
+    cdf = [(int(t), float(share)) for t, share in stats["cdf"]]
+    at = dict(cdf)
+    quality = "insufficient" if events < 5 else "limited" if events < 30 else "good"
+    on_time_10 = stats["on_time_10_percent"] / 100
+    months = stats.get("months") or [None, None]
+    result: dict[str, Any] = {
+        "status": "insufficient_data" if quality == "insufficient" else "ok", "source": delay_index.DATASET,
+        "window_days": 30 * max(1, len(delay_index.built_months())), "sample_count": events, "reliability_sample_count": events,
+        "explicit_cancellations": cancelled, "cancellation_rate": cancelled / events,
+        "first_observation": f"{months[0]}-01" if months[0] else None, "last_observation": f"{months[1]}-01" if months[1] else None,
+        "quality": quality, "fallback_level": "index",
+        "direct_event": f"not_cancelled_and_arrival_delay_lte_{DIRECT_ON_TIME_LIMIT_MINUTES}_minutes",
+        "direct_reliability_rate": at.get(DIRECT_ON_TIME_LIMIT_MINUTES, on_time_10),
+        "average_arrival_delay_minutes": stats["average_delay_minutes"],
+        "on_time_5_rate": stats["on_time_5_percent"] / 100, "on_time_10_rate": on_time_10, "late_over_10_rate": 1 - on_time_10,
+        "_cdf": cdf,
+    }
+    return {key: round(value, 3) if isinstance(value, float) else value for key, value in result.items() if value is not None}
+
+
 def reliability_label(percent: int, kind: str) -> str:
     if kind == "connection":
         return "Anschluss " + ("sehr wahrscheinlich" if percent >= 90 else "wahrscheinlich" if percent >= 75 else "unsicher" if percent >= 55 else "eher unwahrscheinlich" if percent >= 35 else "unwahrscheinlich")
@@ -287,17 +311,22 @@ def _connection(incoming: dict[str, Any], outgoing: dict[str, Any]) -> dict[str,
     if not arrival or not departure or stats.get("status") != "ok":
         return {"status": "insufficient_data", "sample_count": stats.get("reliability_sample_count", 0)}
     transfer_minutes = (departure - arrival).total_seconds() / 60
-    delays = [float(value) for value in stats.get("_arrival_delay_samples", [])]
-    denominator = len(delays) + int(stats.get("explicit_cancellations", 0))
+    cdf = stats.get("_cdf")
+    if cdf:
+        delays: list[float] = []
+        denominator = int(stats.get("reliability_sample_count", 0))
+    else:
+        delays = [float(value) for value in stats.get("_arrival_delay_samples", [])]
+        denominator = len(delays) + int(stats.get("explicit_cancellations", 0))
     if transfer_minutes < 0 or denominator < 5:
         return {"status": "insufficient_data", "sample_count": denominator}
-    rate = sum(delay <= transfer_minutes for delay in delays) / denominator
+    rate = delay_index.share_within(cdf, transfer_minutes) if cdf else sum(delay <= transfer_minutes for delay in delays) / denominator
     percent = round(rate * 100)
     return {
         "status": "ok", "kind": "connection", "percent": percent,
         "label": reliability_label(percent, "connection"), "approximate": denominator < 30,
         "sample_count": denominator, "scheduled_transfer_minutes": round(transfer_minutes),
-        "method": "empirical_incoming_arrival_cdf", "station": incoming.get("destination", {}).get("name") if isinstance(incoming.get("destination"), dict) else incoming.get("destination"),
+        "method": "index_arrival_cdf" if cdf else "empirical_incoming_arrival_cdf", "station": incoming.get("destination", {}).get("name") if isinstance(incoming.get("destination"), dict) else incoming.get("destination"),
     }
 
 
@@ -314,6 +343,13 @@ async def _enrich_route(route: dict[str, Any], semaphore: asyncio.Semaphore) -> 
         if identity is None:
             return {**leg, "reliability": {"status": "unavailable", "reason": "insufficient_train_identity"}}
         try:
+            if delay_index.ENABLED:
+                if delay_index.built_months():
+                    indexed = await delay_index.arrival_stats(identity[0], identity[1], identity[3])
+                    if indexed and "ran" in indexed:
+                        return {**leg, "reliability": index_statistics(indexed)}
+                else:
+                    delay_index.request_build()  # der Index baut sich beim ersten Bedarf im Hintergrund auf
             stats = await asyncio.wait_for(
                 _statistics_for_leg(*identity, HISTORY_DEFAULT_WINDOW_DAYS, _as_datetime(leg.get("departure")), semaphore),
                 timeout=HISTORY_REMOTE_TIMEOUT,
