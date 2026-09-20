@@ -8,6 +8,8 @@ os.environ["DB_CFFI_TOKEN"] = "test"
 
 from reisevergleich import mcp_server, price_history as ph  # noqa: E402
 
+ph.ENABLED = True
+
 
 def result(price_db, price_flix, travel_date="2026-10-06", origin="Leipzig Hbf", destination="Hamburg Hbf"):
     return {"response_context": {

@@ -13,6 +13,12 @@ import duckdb  # noqa: E402
 
 from reisevergleich import delay_index, mcp_server  # noqa: E402
 
+# Bei gemeinsamem Lauf (pytest) sind die Module schon geladen: Werte deshalb direkt setzen.
+delay_index.ENABLED = True
+delay_index.MONTHS = 2
+delay_index.SOURCE_TEMPLATE = str(_tmp / "data-{month}.parquet")
+delay_index._state.update(running=False, current=None, done=[], error=None)
+
 # ---- Verspätungsindex aus einer kleinen, echt gebauten Parquet-Datei ----------------------------------
 assert delay_index.wanted_months(__import__("datetime").date(2026, 9, 20), 3) == ["2026-08", "2026-07", "2026-06"]
 assert delay_index.wanted_months(__import__("datetime").date(2026, 1, 5), 2) == ["2025-12", "2025-11"]
