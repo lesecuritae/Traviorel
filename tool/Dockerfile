@@ -1,4 +1,7 @@
-FROM golang:1.26-bookworm AS trvl-builder
+# Go läuft immer auf der Build-Maschine und baut für die Zielarchitektur: keine Emulation, kein 15-Minuten-arm64-Build.
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS trvl-builder
+ARG TARGETOS=linux
+ARG TARGETARCH
 ARG TRVL_REF=v1.21.4
 RUN case "$TRVL_REF" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "TRVL_REF must be a version tag such as v1.21.4" >&2; exit 2 ;; esac
 RUN apt-get update \
@@ -12,7 +15,9 @@ RUN git init trvl \
     && git checkout --detach "refs/tags/${TRVL_REF}" \
     && git rev-parse HEAD > /tmp/TRVL_COMMIT
 WORKDIR /src/trvl
-RUN TRVL_VERSION="${TRVL_REF#v}" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.Version=${TRVL_VERSION}" -o /out/trvl ./cmd/trvl && /out/trvl version | grep -F "trvl ${TRVL_VERSION}" >/dev/null && /out/trvl hotels --help | grep -F -- "--enrich-rooms" >/dev/null && /out/trvl flights --help | grep -F -- "--provider" >/dev/null && /out/trvl ground --help | grep -F -- "--provider" >/dev/null && cp /tmp/TRVL_COMMIT /out/TRVL_COMMIT && echo "${TRVL_REF}" > /out/TRVL_REF
+RUN TRVL_VERSION="${TRVL_REF#v}" && GOOS="${TARGETOS}" GOARCH="${TARGETARCH:-$(go env GOARCH)}" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.Version=${TRVL_VERSION}" -o /out/trvl ./cmd/trvl \
+    && if [ "${TARGETARCH:-$(go env GOARCH)}" = "$(go env GOARCH)" ]; then /out/trvl version | grep -F "trvl ${TRVL_VERSION}" >/dev/null && /out/trvl hotels --help | grep -F -- "--enrich-rooms" >/dev/null && /out/trvl flights --help | grep -F -- "--provider" >/dev/null && /out/trvl ground --help | grep -F -- "--provider" >/dev/null; fi \
+    && cp /tmp/TRVL_COMMIT /out/TRVL_COMMIT && echo "${TRVL_REF}" > /out/TRVL_REF
 
 FROM python:3.13-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 \
