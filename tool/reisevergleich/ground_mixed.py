@@ -5,7 +5,7 @@ import re
 from datetime import timedelta
 from typing import Any
 
-from .config import TZ
+from .config import MAX_FEEDER_HANDOFFS, TZ
 from .db import rank_routes
 from .feeder_common import _compact_feeder_segment, _route_price
 from .feeder_db import _db_routes, _outbound_via_options, _return_via_options
@@ -105,7 +105,9 @@ async def ground_mixed_options(
     split_candidates: list[str], *, include_flixbus: bool, include_flixtrain: bool,
     transfer_minutes: int = 15,
 ) -> list[dict[str, Any]]:
-    candidates = [x.strip() for x in split_candidates if str(x).strip()][:4]
+    # Each handoff multiplies the db-api searches one request causes; use the same clamp as
+    # the flight-feeder path instead of a fixed 4.
+    candidates = [x.strip() for x in split_candidates if str(x).strip()][:MAX_FEEDER_HANDOFFS]
     db_first = await asyncio.gather(*(
         _outbound_via_options(origin, destination, handoff, travel_date, departure_after, None,
                               transfer_minutes, deutschlandticket_first=True)

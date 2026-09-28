@@ -228,3 +228,27 @@ def test_redirect_loop_is_bounded():
     with pytest.raises(db_cffi_bridge.RedirectRejected):
         db_cffi_bridge._request_with_entry(_entry(session), "GET", "https://www.bahn.de/loop", {}, None)
     assert len(session.calls) == db_cffi_bridge._MAX_REDIRECTS + 1
+
+
+# Lead 1 (app side): split candidates multiply db-api searches per request.
+
+async def test_ground_mixed_handoffs_use_the_feeder_clamp(monkeypatch):
+    from reisevergleich import ground_mixed
+
+    seen = []
+
+    async def fake_via(origin, destination, handoff, *args, **kwargs):
+        seen.append(handoff)
+        return []
+
+    async def fake_flix(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(ground_mixed, "_outbound_via_options", fake_via)
+    monkeypatch.setattr(ground_mixed, "_return_via_options", fake_via)
+    monkeypatch.setattr(ground_mixed, "_flix_three_part", fake_flix)
+    await ground_mixed.ground_mixed_options(
+        "A", "B", "2030-09-15", "06:00", [f"S{i}" for i in range(8)], include_flixbus=True, include_flixtrain=True,
+    )
+    assert sorted(set(seen)) == [f"S{i}" for i in range(ground_mixed.MAX_FEEDER_HANDOFFS)]
+    assert len(seen) == 2 * ground_mixed.MAX_FEEDER_HANDOFFS

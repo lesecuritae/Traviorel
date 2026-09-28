@@ -27,23 +27,47 @@ const CFFI_TOKEN = readCffiToken();
 const cffiSessionStorage = new AsyncLocalStorage();
 const DBNAV_BLOCK_TTL_MS = Number.parseInt(process.env.DBNAV_BLOCK_TTL_MS || '30000', 10);
 const DBNAV_MAX_CONCURRENCY = Math.max(1, Number.parseInt(process.env.DBNAV_MAX_CONCURRENCY || '2', 10));
+const DBNAV_MAX_QUEUE = Math.max(0, Number.parseInt(process.env.DBNAV_MAX_QUEUE || '16', 10));
+const DBNAV_QUEUE_TIMEOUT_MS = Math.max(100, Number.parseInt(process.env.DBNAV_QUEUE_TIMEOUT_MS || '20000', 10));
 let dbnavBlockedUntil = 0;
 let dbnavActive = 0;
 const dbnavWaiters = [];
 
+// The wait queue is bounded in length and in time. It used to be unbounded with no
+// deadline, so one fan-out search could park dozens of lookups here that kept running long
+// after the caller gave up. A slot is handed straight to the next waiter on release; the old
+// decrement-then-wake order let a new caller slip in and push the count past the limit.
 async function acquireDbnavSlot() {
-  if (dbnavActive < DBNAV_MAX_CONCURRENCY) {
+  if (dbnavActive < DBNAV_MAX_CONCURRENCY && dbnavWaiters.length === 0) {
     dbnavActive += 1;
     return;
   }
-  await new Promise((resolve) => dbnavWaiters.push(resolve));
-  dbnavActive += 1;
+  if (dbnavWaiters.length >= DBNAV_MAX_QUEUE) throw dbnavBusy('queue full');
+  await new Promise((resolve, reject) => {
+    const waiter = {resolve, timer: null};
+    waiter.timer = setTimeout(() => {
+      const index = dbnavWaiters.indexOf(waiter);
+      if (index !== -1) dbnavWaiters.splice(index, 1);
+      reject(dbnavBusy('queue wait timed out'));
+    }, DBNAV_QUEUE_TIMEOUT_MS);
+    dbnavWaiters.push(waiter);
+  });
 }
 
 function releaseDbnavSlot() {
-  dbnavActive = Math.max(0, dbnavActive - 1);
   const next = dbnavWaiters.shift();
-  if (next) next();
+  if (next) {
+    clearTimeout(next.timer);
+    next.resolve(); // the slot passes to the waiter; dbnavActive is unchanged
+    return;
+  }
+  dbnavActive = Math.max(0, dbnavActive - 1);
+}
+
+function dbnavBusy(reason) {
+  const error = new Error(`dbnav busy: ${reason}`);
+  error.code = 'DBNAV_BUSY';
+  return error;
 }
 
 async function withDbnavSlot(task) {
@@ -869,6 +893,10 @@ async function searchJourneys(body) {
         attempts.push({profile: profileName, ok: false, skipped: true, error: 'dbnav temporarily blocked'});
         continue;
       }
+      if (profileName === 'dbnav' && error?.code === 'DBNAV_BUSY') {
+        attempts.push({profile: profileName, ok: false, skipped: true, error: errorText(error)});
+        continue;
+      }
       if (profileName === 'dbnav' && (error?.code === 'OPS_BLOCKED' || errorText(error).includes('OPS_BLOCKED'))) {
         markDbnavBlocked();
       }
@@ -1508,6 +1536,32 @@ async function runSelfTests() {
     )));
     if (splitPeak !== 4) {
       throw new Error(`self-test the db profile should not be throttled by the dbnav gate: peak=${splitPeak}`);
+    }
+
+    // The dbnav wait queue is bounded in length and time, and a released slot goes to the
+    // next waiter rather than to whoever calls next.
+    let gateActive = 0;
+    let gatePeak = 0;
+    const hold = (ms) => withDbnavSlot(async () => {
+      gateActive += 1;
+      gatePeak = Math.max(gatePeak, gateActive);
+      await new Promise((resolve) => setTimeout(resolve, ms));
+      gateActive -= 1;
+    });
+    const overflow = Array.from({length: DBNAV_MAX_CONCURRENCY + DBNAV_MAX_QUEUE + 3}, () => hold(30).then(() => 'ok', (error) => error.code));
+    const overflowResults = await Promise.all(overflow);
+    const busy = overflowResults.filter((result) => result === 'DBNAV_BUSY').length;
+    if (busy !== 3 || gatePeak > DBNAV_MAX_CONCURRENCY) {
+      throw new Error(`self-test dbnav queue bound failed: busy=${busy} peak=${gatePeak}`);
+    }
+    gatePeak = 0;
+    const late = [];
+    const first = Array.from({length: DBNAV_MAX_CONCURRENCY + 2}, () => hold(15));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    for (let i = 0; i < 4; i += 1) late.push(hold(5));
+    await Promise.all([...first, ...late]);
+    if (gatePeak > DBNAV_MAX_CONCURRENCY || dbnavActive !== 0 || dbnavWaiters.length !== 0) {
+      throw new Error(`self-test dbnav slot hand-off failed: peak=${gatePeak} active=${dbnavActive} waiting=${dbnavWaiters.length}`);
     }
   } finally {
     clients.db = originalDb;
