@@ -17,6 +17,7 @@ from typing import Any
 from curl_cffi import requests as curl_requests
 
 from . import cache
+from .keyed_locks import KeyedAsyncLocks, KeyedThreadLocks
 from .config import (
     HISTORY_CACHE_DIR, HISTORY_CACHE_MAX_GB, HISTORY_MAX_CONCURRENCY,
     HISTORY_REMOTE_TIMEOUT, HISTORY_SNAPSHOT_RETENTION_DAYS, HISTORY_SOURCE_REVISION, TZ,
@@ -31,7 +32,7 @@ DETAIL_COLUMNS = (
     "departure_planned_time", "departure_change_time",
 )
 _MONTH_RE = re.compile(r"^20\d{2}-(0[1-9]|1[0-2])$")
-_locks: dict[str, asyncio.Lock] = {}
+_locks = KeyedAsyncLocks()
 _active: set[str] = set()
 _reading: set[str] = set()
 _guard = threading.Lock()
@@ -39,8 +40,7 @@ _remote_fill_limiter = threading.BoundedSemaphore(max(1, HISTORY_MAX_CONCURRENCY
 _history_executor = ThreadPoolExecutor(
     max_workers=max(1, HISTORY_MAX_CONCURRENCY), thread_name_prefix="traviorel-history",
 )
-_snapshot_locks: dict[str, threading.Lock] = {}
-_snapshot_locks_guard = threading.Lock()
+_snapshot_locks = KeyedThreadLocks()
 _SNAPSHOT_SCHEMA = 1
 _SECRET_KEYS = {"authorization", "cookie", "password", "secret", "token", "api_key", "apikey"}
 _MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024
@@ -74,10 +74,8 @@ def _snapshot_root(snapshot_id: str) -> Path:
     return target
 
 
-def _snapshot_lock(snapshot_id: str) -> threading.Lock:
-    key = _snapshot_key(snapshot_id)
-    with _snapshot_locks_guard:
-        return _snapshot_locks.setdefault(key, threading.Lock())
+def _snapshot_lock(snapshot_id: str):
+    return _snapshot_locks.hold(_snapshot_key(snapshot_id))
 
 
 def _validate_snapshot_payload(value: Any, path: tuple[str, ...] = ()) -> None:
@@ -386,7 +384,7 @@ def protect_detail_paths(paths: list[Path]):
 
 async def ensure_detail_cache(spec: DetailSpec) -> Path:
     key = detail_cache_key(spec)
-    async with _locks.setdefault(key, asyncio.Lock()):
+    async with _locks.hold(key):
         with _guard:
             _active.add(key)
         try:

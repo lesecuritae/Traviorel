@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from curl_cffi import requests
 from curl_cffi.requests.impersonate import BrowserType
@@ -178,6 +178,13 @@ def _authorize(token: str | None) -> None:
         raise HTTPException(status_code=403, detail="forbidden")
 
 
+_MAX_REDIRECTS = 5
+
+
+class RedirectRejected(Exception):
+    """A redirect left the allowlist or looped. Not a transport error, so no retry."""
+
+
 def _request_with_entry(
     entry: _SessionEntry,
     method: str,
@@ -185,14 +192,30 @@ def _request_with_entry(
     headers: dict[str, str],
     body: str | bytes | None,
 ):
-    return entry.session.request(
-        method,
-        url,
-        headers=headers,
-        data=body.encode("utf-8") if isinstance(body, str) else body,
-        timeout=30,
-        allow_redirects=True,
-    )
+    # Redirects are followed here, not by curl_cffi, so every hop is held to the same
+    # https + _ALLOWED_HOSTS rule as the first request. With allow_redirects=True a bahn.de
+    # response could send the bridge anywhere and its body came back to the caller.
+    data = body.encode("utf-8") if isinstance(body, str) else body
+    for _ in range(_MAX_REDIRECTS + 1):
+        response = entry.session.request(
+            method,
+            url,
+            headers=headers,
+            data=data,
+            timeout=30,
+            allow_redirects=False,
+        )
+        location = response.headers.get("location")
+        if response.status_code not in (301, 302, 303, 307, 308) or not location:
+            return response
+        target = urljoin(url, location)
+        parsed = urlparse(target)
+        if parsed.scheme != "https" or parsed.hostname not in _ALLOWED_HOSTS:
+            raise RedirectRejected("redirect target not allowed")
+        if response.status_code == 303 or (response.status_code in (301, 302) and method not in ("GET", "HEAD")):
+            method, data = "GET", None
+        url = target
+    raise RedirectRejected("too many redirects")
 
 
 @router.get("/internal/db-cffi/status", include_in_schema=False)
@@ -262,6 +285,9 @@ def db_cffi_request(
                 "fingerprint_rotated": rotated,
                 "session_reused": reused,
             }
+        except RedirectRejected as exc:
+            last_exc = exc
+            break
         except Exception as exc:
             last_exc = exc
             if attempt == 0 and len(_FIREFOX_POOL) > 1:

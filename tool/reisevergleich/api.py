@@ -9,7 +9,7 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from .airports import AIRPORT_CITY_NAMES, AIRPORT_STATIONS
 from .cache import health as cache_health
 from .config import APP_VERSION, DB_API_URL, TRANSITOUS_URL, TRANSITOUS_USER_AGENT, today_iso
-from .models import CoverageRequest, PriceCalendarRequest, ReiseRequest, TripRequest, WarningRouteRequest
+from .models import PLACE_MAX_LENGTH, CoverageRequest, PriceCalendarRequest, ReiseRequest, TripRequest, WarningRouteRequest
 from .coverage import analyze_route
 from .warnings import warnings_for_routes
 from .service import price_calendar, search
@@ -66,7 +66,7 @@ async def flexible_price_calendar(request: PriceCalendarRequest) -> dict[str, An
 
 
 @router.get("/api/flix-stops")
-async def flix_stops(origin: str = Query(min_length=1), destination: str = Query(min_length=1)) -> dict[str, Any]:
+async def flix_stops(origin: str = Query(min_length=1, max_length=PLACE_MAX_LENGTH), destination: str = Query(min_length=1, max_length=PLACE_MAX_LENGTH)) -> dict[str, Any]:
     return await discover_gtfs_flix_stops(origin, destination)
 
 

@@ -8,6 +8,18 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from .config import TZ, today_iso
 
+# Free-text place names. Station search already caps its query at 120; the search models
+# had no bound, and stop scoring cost grew with the query length for every stop row.
+PLACE_MAX_LENGTH = 120
+
+
+def reject_option_like(value: str, label: str) -> str:
+    # Place names are passed to the trvl CLI as positional arguments. A value starting with
+    # '-' would be parsed as a flag instead; no real place name starts that way.
+    if value.startswith("-"):
+        raise ValueError(f"{label} darf nicht mit '-' beginnen")
+    return value
+
 
 class StationSelection(BaseModel):
     """A user-confirmed stop with its provider-native identifier."""
@@ -74,8 +86,8 @@ def _future_or_today(value: str | None, field_name: str) -> str | None:
 
 
 class ReiseRequest(BaseModel):
-    origin: str = Field(description="Startort oder Bahnhof")
-    destination: str = Field(description="Zielort oder Bahnhof")
+    origin: str = Field(max_length=PLACE_MAX_LENGTH, description="Startort oder Bahnhof")
+    destination: str = Field(max_length=PLACE_MAX_LENGTH, description="Zielort oder Bahnhof")
     travel_date: str = Field(description="Reisedatum YYYY-MM-DD; kein Datum in der Vergangenheit verwenden")
     departure_after: str = Field(default="06:00", description="Früheste Abfahrt HH:MM")
     preference: Literal["balanced", "cheapest", "fastest", "fewest_transfers"] = "balanced"
@@ -98,7 +110,7 @@ class ReiseRequest(BaseModel):
         value = value.strip()
         if not value:
             raise ValueError("Start und Ziel dürfen nicht leer sein")
-        return value
+        return reject_option_like(value, "Start und Ziel")
 
     @field_validator("travel_date")
     @classmethod
@@ -138,8 +150,8 @@ class ReiseRequest(BaseModel):
 
 
 class DeutschlandticketRequest(BaseModel):
-    origin: str
-    destination: str
+    origin: str = Field(max_length=PLACE_MAX_LENGTH)
+    destination: str = Field(max_length=PLACE_MAX_LENGTH)
     travel_date: str
     departure_after: str = "06:00"
     max_transfers: int | None = Field(default=None, ge=0, le=10)
@@ -151,7 +163,7 @@ class DeutschlandticketRequest(BaseModel):
         value = value.strip()
         if not value:
             raise ValueError("Start und Ziel dürfen nicht leer sein")
-        return value
+        return reject_option_like(value, "Start und Ziel")
 
     @field_validator("travel_date")
     @classmethod
@@ -204,7 +216,7 @@ class FlightRequest(BaseModel):
 
 
 class HotelRequest(BaseModel):
-    location: str
+    location: str = Field(max_length=PLACE_MAX_LENGTH)
     checkin_date: str
     checkout_date: str
     adults: int = Field(default=1, ge=1, le=12)
@@ -220,7 +232,7 @@ class HotelRequest(BaseModel):
         value = value.strip()
         if not value:
             raise ValueError("Hotelort darf nicht leer sein")
-        return value
+        return reject_option_like(value, "Hotelort")
 
     @field_validator("checkin_date")
     @classmethod
@@ -244,8 +256,8 @@ class TripRequest(BaseModel):
 
     travel_mode: Literal["flight", "ground"] = "flight"
     journey_type: Literal["round_trip", "one_way"] = "round_trip"
-    origin: str = Field(description="Startort oder Startbahnhof")
-    destination: str = Field(description="Zielort")
+    origin: str = Field(max_length=PLACE_MAX_LENGTH, description="Startort oder Startbahnhof")
+    destination: str = Field(max_length=PLACE_MAX_LENGTH, description="Zielort")
     departure_date: str = Field(description="Abreisetag YYYY-MM-DD")
     departure_after: str = Field(default="06:00", description="Früheste Abfahrt zum Flughafen HH:MM")
 
@@ -274,12 +286,14 @@ class TripRequest(BaseModel):
     include_flixtrain: bool = True
     include_flixbus: bool = True
     split_ticket_check: bool = True
-    feeder_split_candidates: list[str] = Field(default_factory=list)
+    # Bounded before the validator runs: it keeps 8, and dedup cost grew with the raw list.
+    feeder_split_candidates: list[str] = Field(default_factory=list, max_length=32)
     feeder_transfer_minutes: int = Field(default=15, ge=5, le=60)
     feeder_preference: Literal["dticket_first", "cheapest", "fastest", "balanced"] = "dticket_first"
 
     origin_airports: list[str] = Field(
         default_factory=list,
+        max_length=12,
         description="Optionale IATA-Abflughäfen. Leer = deterministisch aus origin ableiten.",
     )
     destination_airport: str | None = Field(
@@ -317,7 +331,7 @@ class TripRequest(BaseModel):
         value = value.strip()
         if not value:
             raise ValueError("Start und Ziel dürfen nicht leer sein")
-        return value
+        return reject_option_like(value, "Start und Ziel")
 
     @field_validator("departure_date", "return_date")
     @classmethod
@@ -334,11 +348,13 @@ class TripRequest(BaseModel):
     @classmethod
     def valid_origin_airports(cls, values: list[str]) -> list[str]:
         out: list[str] = []
+        seen: set[str] = set()
         for raw in values:
             code = str(raw).strip().upper()
             if len(code) != 3 or not code.isalpha():
                 raise ValueError("Jeder Abflughafen muss ein dreistelliger IATA-Code sein")
-            if code not in out:
+            if code not in seen:
+                seen.add(code)
                 out.append(code)
         return out[:6]
 
@@ -356,11 +372,15 @@ class TripRequest(BaseModel):
     @classmethod
     def valid_split_candidates(cls, values: list[str]) -> list[str]:
         out: list[str] = []
+        seen: set[str] = set()
         for raw in values:
             station = str(raw).strip()
-            if station and station.casefold() not in {x.casefold() for x in out}:
+            if station and station.casefold() not in seen:
+                seen.add(station.casefold())
                 out.append(station)
-        return out[:8]
+                if len(out) == 8:
+                    break
+        return out
 
     @model_validator(mode="after")
     def validate_trip(self):

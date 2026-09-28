@@ -99,25 +99,42 @@ def _place_tokens(value: str) -> set[str]:
     return {token for token in _key(value).split() if token not in ignored}
 
 
-def stop_score(query: str, name: str) -> int:
-    if exact_location_key(query) == exact_location_key(name):
-        return 110
-    query_key, name_key = _key(query), _key(name)
-    if not query_key or not name_key:
+def make_stop_scorer(query: str):
+    """Normalise the query once and return a scorer for stop names.
+
+    Scoring runs once per stop row. Recomputing the query's keys inside that loop made the
+    cost stop_count x query_length for every request.
+    """
+    query_exact = exact_location_key(query)
+    query_key = _key(query)
+    query_airport = has_airport_context(query)
+    query_tokens = _place_tokens(query) if query_key else set()
+
+    def score(name: str) -> int:
+        if query_exact == exact_location_key(name):
+            return 110
+        name_key = _key(name)
+        if not query_key or not name_key:
+            return 0
+        airport_penalty = 20 if not query_airport and has_airport_context(name) else 0
+        if query_key == name_key:
+            return 100 - airport_penalty
+        name_tokens = _place_tokens(name)
+        if query_tokens and query_tokens == name_tokens:
+            return 90 - airport_penalty
+        if name_key.startswith(query_key + " "):
+            return 80 - airport_penalty
+        if query_tokens and query_tokens <= name_tokens:
+            return 75 - airport_penalty
+        if query_key in name_key:
+            return 60 - airport_penalty
         return 0
-    airport_penalty = 20 if not has_airport_context(query) and has_airport_context(name) else 0
-    if query_key == name_key:
-        return 100 - airport_penalty
-    query_tokens, name_tokens = _place_tokens(query), _place_tokens(name)
-    if query_tokens and query_tokens == name_tokens:
-        return 90 - airport_penalty
-    if name_key.startswith(query_key + " "):
-        return 80 - airport_penalty
-    if query_tokens and query_tokens <= name_tokens:
-        return 75 - airport_penalty
-    if query_key in name_key:
-        return 60 - airport_penalty
-    return 0
+
+    return score
+
+
+def stop_score(query: str, name: str) -> int:
+    return make_stop_scorer(query)(name)
 
 
 def service_active(calendar: dict[str, str] | None, exceptions: dict[str, int], day: date) -> bool:
@@ -296,8 +313,9 @@ def _search_sync(database: Path, request) -> dict[str, Any]:
     with sqlite3.connect(database) as db:
         db.row_factory = sqlite3.Row
         stops = list(db.execute("SELECT stop_id,name,parent_station,timezone FROM stop"))
-        origins = sorted(((stop_score(request.origin, r["name"]), r) for r in stops), reverse=True, key=lambda pair: pair[0])
-        destinations = sorted(((stop_score(request.destination, r["name"]), r) for r in stops), reverse=True, key=lambda pair: pair[0])
+        origin_score, destination_score = make_stop_scorer(request.origin), make_stop_scorer(request.destination)
+        origins = sorted(((origin_score(r["name"]), r) for r in stops), reverse=True, key=lambda pair: pair[0])
+        destinations = sorted(((destination_score(r["name"]), r) for r in stops), reverse=True, key=lambda pair: pair[0])
         origin_selection = getattr(request, "origin_station", None)
         destination_selection = getattr(request, "destination_station", None)
         selected_origin = origin_selection if origin_selection and origin_selection.id_for("flix") else None
@@ -380,7 +398,8 @@ async def search(request, *, force_refresh: bool = False) -> dict[str, Any]:
 def _stop_suggestions_sync(database: Path, query: str) -> list[dict[str, Any]]:
     with sqlite3.connect(database) as db:
         rows = db.execute("SELECT stop_id,name,timezone,latitude,longitude,parent_station FROM stop").fetchall()
-    ranked = sorted(((stop_score(query, row[1]), row) for row in rows), reverse=True, key=lambda item: (item[0], item[1][1]))
+    score = make_stop_scorer(query)
+    ranked = sorted(((score(row[1]), row) for row in rows), reverse=True, key=lambda item: (item[0], item[1][1]))
     output, names = [], set()
     for score, row in ranked:
         normalized = _key(row[1])
