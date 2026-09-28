@@ -348,7 +348,7 @@ docker compose build
 docker compose up -d
 ```
 
-trvl ist über `TRVL_REF` gepinnt; Traviorel 0.3.0 verwendet standardmäßig `v1.21.4`.
+trvl ist über `TRVL_REF` und `TRVL_COMMIT` gepinnt; Traviorel 0.3.0 verwendet standardmäßig `v1.21.4` (Commit `0d5bbc49`). Zeigt der Tag nicht mehr auf diesen Commit, bricht der Build ab; beide Werte daher nur gemeinsam und nach Prüfung des neuen Upstream-Commits anheben.
 
 ## Eindeutige Stationsauswahl
 
