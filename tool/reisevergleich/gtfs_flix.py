@@ -19,7 +19,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
-from .config import FLIX_GTFS_DIR, FLIX_GTFS_MAX_AGE, FLIX_GTFS_TIMEOUT, FLIX_GTFS_URL, TRANSITOUS_USER_AGENT, TZ
+from .config import (
+    FLIX_GTFS_DIR, FLIX_GTFS_MAX_AGE, FLIX_GTFS_MAX_DOWNLOAD_BYTES, FLIX_GTFS_MAX_DOWNLOAD_SECONDS,
+    FLIX_GTFS_MAX_UNCOMPRESSED_BYTES, FLIX_GTFS_TIMEOUT, FLIX_GTFS_URL, TRANSITOUS_USER_AGENT, TZ,
+)
 from .db import rank_routes
 from .location_resolver import CITY_ALIASES, exact_location_key, has_airport_context, location_key
 from .utils import as_float, parse_datetime
@@ -29,6 +32,18 @@ REQUIRED = {"agency.txt", "routes.txt", "trips.txt", "stops.txt", "stop_times.tx
 GTFS_SCHEMA_VERSION = 2
 MAX_ROUTE_GEOMETRY_POINTS = 300
 _lock = asyncio.Lock()
+# A zip member expanding more than this many times its compressed size is not a GTFS feed.
+MAX_COMPRESSION_RATIO = 200
+# After a failed refresh, wait before the next attempt (doubling up to an hour). Without
+# this every uncached caller re-ran the full download while the upstream was failing.
+REFRESH_BACKOFF_START = 300
+REFRESH_BACKOFF_MAX = 3600
+_refresh_failures = 0
+_refresh_retry_at = 0.0
+
+
+class FeedRefreshBackoff(RuntimeError):
+    pass
 
 
 def _database_current(database: Path) -> bool:
@@ -156,8 +171,21 @@ def _rows(archive: zipfile.ZipFile, name: str):
         yield from csv.DictReader(text)
 
 
+def _check_archive_limits(archive: zipfile.ZipFile) -> None:
+    # ZipExtFile never yields more than the header's file_size, so bounding the declared
+    # sizes bounds what the build below can write to disk.
+    total = 0
+    for info in archive.infolist():
+        total += info.file_size
+        if info.file_size > 1024 * 1024 and info.file_size > MAX_COMPRESSION_RATIO * max(info.compress_size, 1):
+            raise ValueError(f"GTFS-Feed: {info.filename} ist unplausibel stark komprimiert")
+    if total > FLIX_GTFS_MAX_UNCOMPRESSED_BYTES:
+        raise ValueError("GTFS-Feed ist entpackt zu groß")
+
+
 def _build_database(zip_path: Path, database_path: Path, metadata: dict[str, Any]) -> None:
     with zipfile.ZipFile(zip_path) as archive:
+        _check_archive_limits(archive)
         names = {Path(name).name for name in archive.namelist()}
         missing = REQUIRED - names
         if missing:
@@ -209,6 +237,7 @@ def _build_database(zip_path: Path, database_path: Path, metadata: dict[str, Any
 
 
 def _refresh_sync(force: bool = False) -> Path:
+    global _refresh_failures, _refresh_retry_at
     directory = Path(FLIX_GTFS_DIR); directory.mkdir(parents=True, exist_ok=True)
     database = directory / "flix.sqlite3"
     if database.exists() and not force and _database_current(database) and time.time() - database.stat().st_mtime < FLIX_GTFS_MAX_AGE:
@@ -222,28 +251,62 @@ def _refresh_sync(force: bool = False) -> Path:
             if previous.get("last_modified"): headers["If-Modified-Since"] = previous["last_modified"]
         except (OSError, ValueError):
             pass
+    if time.time() < _refresh_retry_at:
+        if database.exists():
+            return database
+        raise FeedRefreshBackoff("Flix-GTFS-Aktualisierung pausiert nach Fehler")
     try:
-        with httpx.Client(timeout=httpx.Timeout(FLIX_GTFS_TIMEOUT, connect=min(10, FLIX_GTFS_TIMEOUT)), follow_redirects=True, headers={"User-Agent": TRANSITOUS_USER_AGENT, "Accept": "application/zip"}) as client:
-            response = client.get(FLIX_GTFS_URL, headers=headers)
-        if response.status_code == 304 and database.exists():
-            os.utime(database, None); return database
-        response.raise_for_status()
-        if len(response.content) < 1024:
-            raise ValueError("GTFS-Download ist unerwartet klein")
-        metadata = {"url": FLIX_GTFS_URL, "etag": response.headers.get("etag"), "last_modified": response.headers.get("last-modified"), "downloaded_at": datetime.now(timezone.utc).isoformat()}
         with tempfile.TemporaryDirectory(dir=directory) as temporary:
-            zip_path = Path(temporary) / "feed.zip"; zip_path.write_bytes(response.content)
+            zip_path = Path(temporary) / "feed.zip"
+            response = _download_feed(zip_path, headers)
+            if response.status_code == 304:
+                if not database.exists():
+                    raise ValueError("GTFS-Server meldet 304 ohne vorhandenen Feed")
+                os.utime(database, None); _refresh_failures = 0; return database
+            metadata = {"url": FLIX_GTFS_URL, "etag": response.headers.get("etag"), "last_modified": response.headers.get("last-modified"), "downloaded_at": datetime.now(timezone.utc).isoformat()}
             new_database = Path(temporary) / "feed.sqlite3"
             _build_database(zip_path, new_database, metadata)
             os.replace(new_database, database)
         temporary_meta = directory / "feed.json.tmp"
         temporary_meta.write_text(json.dumps(metadata, indent=2)); os.replace(temporary_meta, meta_path)
+        _refresh_failures = 0
     except Exception:
+        _refresh_failures += 1
+        _refresh_retry_at = time.time() + min(REFRESH_BACKOFF_START * 2 ** (_refresh_failures - 1), REFRESH_BACKOFF_MAX)
         if database.exists():
             LOG.exception("Flix-GTFS-Aktualisierung fehlgeschlagen; letzter gültiger Feed bleibt aktiv")
             return database
         raise
     return database
+
+
+def _download_feed(zip_path: Path, headers: dict[str, str]) -> httpx.Response:
+    """Stream the feed to disk with a byte cap and an overall deadline.
+
+    The old code held the whole body in memory (response.content) with only a per-operation
+    timeout, so neither size nor total duration was bounded.
+    """
+    deadline = time.monotonic() + FLIX_GTFS_MAX_DOWNLOAD_SECONDS
+    with httpx.Client(timeout=httpx.Timeout(FLIX_GTFS_TIMEOUT, connect=min(10, FLIX_GTFS_TIMEOUT)), follow_redirects=True, headers={"User-Agent": TRANSITOUS_USER_AGENT, "Accept": "application/zip"}) as client:
+        with client.stream("GET", FLIX_GTFS_URL, headers=headers) as response:
+            if response.status_code == 304:
+                return response
+            response.raise_for_status()
+            declared = response.headers.get("content-length")
+            if declared and declared.isdigit() and int(declared) > FLIX_GTFS_MAX_DOWNLOAD_BYTES:
+                raise ValueError("GTFS-Download ist zu groß")
+            written = 0
+            with zip_path.open("wb") as out:
+                for chunk in response.iter_bytes():
+                    written += len(chunk)
+                    if written > FLIX_GTFS_MAX_DOWNLOAD_BYTES:
+                        raise ValueError("GTFS-Download ist zu groß")
+                    if time.monotonic() > deadline:
+                        raise TimeoutError("GTFS-Download dauert zu lange")
+                    out.write(chunk)
+            if written < 1024:
+                raise ValueError("GTFS-Download ist unerwartet klein")
+            return response
 
 
 async def ensure_feed(force: bool = False) -> Path:
