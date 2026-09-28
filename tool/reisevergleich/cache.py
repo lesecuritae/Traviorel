@@ -136,11 +136,15 @@ def _set_component_sync(namespace: str, key_data: Any, value: Any, ttl: int) -> 
         db.commit()
 
 
+DEGRADED_STATUSES = frozenset({"failed", "manual_required", "partial", "unavailable"})
+
+
 def _cacheable_component(value: Any) -> bool:
-    return not (
-        isinstance(value, dict)
-        and value.get("status") in {"failed", "manual_required", "partial", "unavailable"}
-    )
+    # Some producers return (result, diagnostics). A failed DB search came back as a tuple,
+    # so the dict-only check never saw its status and cached it for every client.
+    if isinstance(value, tuple) and value:
+        value = value[0]
+    return not (isinstance(value, dict) and value.get("status") in DEGRADED_STATUSES)
 
 
 async def cached_call(
@@ -198,7 +202,11 @@ def _get_journey_sync(request_data: dict[str, Any]) -> tuple[str, dict[str, Any]
         ).fetchone()
         if row is None:
             return None
-        return row[0], json.loads(row[1])
+        result = json.loads(row[1])
+        # Rows written before degraded results stopped being saved must not be served.
+        if isinstance(result, dict) and result.get("status") in DEGRADED_STATUSES:
+            return None
+        return row[0], result
 
 
 def _save_journey_sync(request_data: dict[str, Any], result: dict[str, Any], ttl: int) -> str:
