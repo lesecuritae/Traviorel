@@ -1041,7 +1041,10 @@ async function ensurePricedJourney(client, profileName, journey, body, timeoutMs
 }
 
 async function findExactJourney(client, profileName, from, to, targetDeparture, expectedArrival, expectedSignature, body) {
-  const response = await withTimeout(client.journeys(from, to, {
+  // Split lookups go through the same global dbnav gate and circuit breaker as
+  // searchJourneys. They used to call client.journeys directly, so a split check could
+  // exceed DBNAV_MAX_CONCURRENCY and keep hitting dbnav while it answered OPS_BLOCKED.
+  const lookup = () => withTimeout(client.journeys(from, to, {
     departure: targetDeparture,
     results: 6,
     stopovers: true,
@@ -1053,6 +1056,7 @@ async function findExactJourney(client, profileName, from, to, targetDeparture, 
     language: 'de',
     products: allProducts,
   }), SPLIT_REQUEST_TIMEOUT_MS, `${profileName} split journey ${from} -> ${to}`);
+  const response = profileName === 'dbnav' ? await withDbnavSlot(lookup) : await lookup();
 
   const candidates = (response?.journeys || [])
     .filter((journey) => candidateMatchesExpected(journey, expectedSignature))
@@ -1466,6 +1470,45 @@ async function runSelfTests() {
       throw new Error('self-test refresh OPS_BLOCKED did not open dbnav circuit');
     }
     dbnavBlockedUntil = 0;
+
+    // Split lookups must respect the dbnav circuit and the global concurrency gate.
+    let splitCalls = 0;
+    let splitActive = 0;
+    let splitPeak = 0;
+    const splitClient = {
+      journeys: async () => {
+        splitCalls += 1;
+        splitActive += 1;
+        splitPeak = Math.max(splitPeak, splitActive);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        splitActive -= 1;
+        return {journeys: []};
+      },
+    };
+    dbnavBlockedUntil = Date.now() + 5000;
+    let splitBlocked = null;
+    try {
+      await findExactJourney(splitClient, 'dbnav', 'A', 'B', new Date('2030-08-15T06:00:00+02:00'), new Date('2030-08-15T08:00:00+02:00'), null, {});
+    } catch (error) {
+      splitBlocked = error;
+    }
+    if (splitBlocked?.code !== 'DBNAV_CIRCUIT_OPEN' || splitCalls !== 0) {
+      throw new Error(`self-test split lookup ignored the dbnav circuit: ${splitBlocked?.code} calls=${splitCalls}`);
+    }
+    dbnavBlockedUntil = 0;
+    await Promise.all(Array.from({length: DBNAV_MAX_CONCURRENCY * 3}, () => findExactJourney(
+      splitClient, 'dbnav', 'A', 'B', new Date('2030-08-15T06:00:00+02:00'), new Date('2030-08-15T08:00:00+02:00'), null, {},
+    )));
+    if (splitPeak > DBNAV_MAX_CONCURRENCY || splitCalls !== DBNAV_MAX_CONCURRENCY * 3) {
+      throw new Error(`self-test split lookups exceeded the dbnav gate: peak=${splitPeak} calls=${splitCalls}`);
+    }
+    splitPeak = 0;
+    await Promise.all(Array.from({length: 4}, () => findExactJourney(
+      splitClient, 'db', 'A', 'B', new Date('2030-08-15T06:00:00+02:00'), new Date('2030-08-15T08:00:00+02:00'), null, {},
+    )));
+    if (splitPeak !== 4) {
+      throw new Error(`self-test the db profile should not be throttled by the dbnav gate: peak=${splitPeak}`);
+    }
   } finally {
     clients.db = originalDb;
     clients.dbnav = originalDbnav;
