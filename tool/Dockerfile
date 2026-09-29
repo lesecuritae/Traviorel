@@ -3,9 +3,13 @@ FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS trvl-builder
 ARG TARGETOS=linux
 ARG TARGETARCH
 ARG TRVL_REF=v1.21.4
+# Tags are mutable. The build must land on this exact commit or fail; bump both together
+# after reviewing the new upstream commit.
+ARG TRVL_COMMIT=0d5bbc4947f102de12e7a277cec3c714c40e1656
 # WITH_TRVL=0 baut ein Image ohne trvl (und ohne dessen Noncommercial-Lizenz); Traviorel läuft dann mit den Direktwegen.
 ARG WITH_TRVL=1
-RUN case "$TRVL_REF" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "TRVL_REF must be a version tag such as v1.21.4" >&2; exit 2 ;; esac
+RUN case "$TRVL_REF" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "TRVL_REF must be a version tag such as v1.21.4" >&2; exit 2 ;; esac \
+    && if [ "$WITH_TRVL" = "1" ]; then printf '%s' "$TRVL_COMMIT" | grep -Eq '^[0-9a-f]{40}$' || { echo "TRVL_COMMIT must be a full 40-character commit hash" >&2; exit 2; }; fi
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -15,7 +19,9 @@ RUN if [ "$WITH_TRVL" = "1" ]; then git init trvl \
     && git remote add origin https://github.com/MikkoParkkola/trvl.git \
     && git fetch --depth 1 origin "refs/tags/${TRVL_REF}:refs/tags/${TRVL_REF}" \
     && git checkout --detach "refs/tags/${TRVL_REF}" \
-    && git rev-parse HEAD > /tmp/TRVL_COMMIT; \
+    && actual="$(git rev-parse HEAD)" \
+    && if [ "$actual" != "$TRVL_COMMIT" ]; then echo "trvl ${TRVL_REF} resolved to ${actual}, expected ${TRVL_COMMIT}" >&2; exit 3; fi \
+    && echo "$actual" > /tmp/TRVL_COMMIT; \
     else mkdir -p trvl/internal/models && : > trvl/internal/models/airports.go \
     && echo "trvl is not part of this image" > trvl/LICENSE && echo none > /tmp/TRVL_COMMIT; fi
 WORKDIR /src/trvl

@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from . import price_history
-from .cache import begin_scope, end_scope, get_cached_journey, save_journey, stats as cache_stats
+from .cache import DEGRADED_STATUSES, begin_scope, end_scope, get_cached_journey, save_journey, stats as cache_stats
 from .compare import compare_ground_round_trip
 from .config import TRIP_TIMEOUT, today_iso
 from .models import PriceCalendarRequest, TripRequest
@@ -81,7 +81,9 @@ async def search(request: TripRequest) -> dict[str, Any]:
                 return public_result(result)
 
         result = await _compute(request)
-        if result.get("status") not in {"missing_fields", "needs_clarification"} and not request.include_hotel:
+        # Degraded results (a provider failed or timed out) are returned to this caller but not
+        # stored: the journey row is shared by every identical request for 30 minutes.
+        if result.get("status") not in {"missing_fields", "needs_clarification", *DEGRADED_STATUSES} and not request.include_hotel:
             try:
                 journey_id = await save_journey(request, result)
                 result = {**result, "journey_id": journey_id}

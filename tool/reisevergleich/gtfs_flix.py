@@ -19,7 +19,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
-from .config import FLIX_GTFS_DIR, FLIX_GTFS_MAX_AGE, FLIX_GTFS_TIMEOUT, FLIX_GTFS_URL, TRANSITOUS_USER_AGENT, TZ
+from .config import (
+    FLIX_GTFS_DIR, FLIX_GTFS_MAX_AGE, FLIX_GTFS_MAX_DOWNLOAD_BYTES, FLIX_GTFS_MAX_DOWNLOAD_SECONDS,
+    FLIX_GTFS_MAX_UNCOMPRESSED_BYTES, FLIX_GTFS_TIMEOUT, FLIX_GTFS_URL, TRANSITOUS_USER_AGENT, TZ,
+)
 from .db import rank_routes
 from .location_resolver import CITY_ALIASES, exact_location_key, has_airport_context, location_key
 from .utils import as_float, parse_datetime
@@ -29,6 +32,18 @@ REQUIRED = {"agency.txt", "routes.txt", "trips.txt", "stops.txt", "stop_times.tx
 GTFS_SCHEMA_VERSION = 2
 MAX_ROUTE_GEOMETRY_POINTS = 300
 _lock = asyncio.Lock()
+# A zip member expanding more than this many times its compressed size is not a GTFS feed.
+MAX_COMPRESSION_RATIO = 200
+# After a failed refresh, wait before the next attempt (doubling up to an hour). Without
+# this every uncached caller re-ran the full download while the upstream was failing.
+REFRESH_BACKOFF_START = 300
+REFRESH_BACKOFF_MAX = 3600
+_refresh_failures = 0
+_refresh_retry_at = 0.0
+
+
+class FeedRefreshBackoff(RuntimeError):
+    pass
 
 
 def _database_current(database: Path) -> bool:
@@ -99,25 +114,42 @@ def _place_tokens(value: str) -> set[str]:
     return {token for token in _key(value).split() if token not in ignored}
 
 
-def stop_score(query: str, name: str) -> int:
-    if exact_location_key(query) == exact_location_key(name):
-        return 110
-    query_key, name_key = _key(query), _key(name)
-    if not query_key or not name_key:
+def make_stop_scorer(query: str):
+    """Normalise the query once and return a scorer for stop names.
+
+    Scoring runs once per stop row. Recomputing the query's keys inside that loop made the
+    cost stop_count x query_length for every request.
+    """
+    query_exact = exact_location_key(query)
+    query_key = _key(query)
+    query_airport = has_airport_context(query)
+    query_tokens = _place_tokens(query) if query_key else set()
+
+    def score(name: str) -> int:
+        if query_exact == exact_location_key(name):
+            return 110
+        name_key = _key(name)
+        if not query_key or not name_key:
+            return 0
+        airport_penalty = 20 if not query_airport and has_airport_context(name) else 0
+        if query_key == name_key:
+            return 100 - airport_penalty
+        name_tokens = _place_tokens(name)
+        if query_tokens and query_tokens == name_tokens:
+            return 90 - airport_penalty
+        if name_key.startswith(query_key + " "):
+            return 80 - airport_penalty
+        if query_tokens and query_tokens <= name_tokens:
+            return 75 - airport_penalty
+        if query_key in name_key:
+            return 60 - airport_penalty
         return 0
-    airport_penalty = 20 if not has_airport_context(query) and has_airport_context(name) else 0
-    if query_key == name_key:
-        return 100 - airport_penalty
-    query_tokens, name_tokens = _place_tokens(query), _place_tokens(name)
-    if query_tokens and query_tokens == name_tokens:
-        return 90 - airport_penalty
-    if name_key.startswith(query_key + " "):
-        return 80 - airport_penalty
-    if query_tokens and query_tokens <= name_tokens:
-        return 75 - airport_penalty
-    if query_key in name_key:
-        return 60 - airport_penalty
-    return 0
+
+    return score
+
+
+def stop_score(query: str, name: str) -> int:
+    return make_stop_scorer(query)(name)
 
 
 def service_active(calendar: dict[str, str] | None, exceptions: dict[str, int], day: date) -> bool:
@@ -139,8 +171,21 @@ def _rows(archive: zipfile.ZipFile, name: str):
         yield from csv.DictReader(text)
 
 
+def _check_archive_limits(archive: zipfile.ZipFile) -> None:
+    # ZipExtFile never yields more than the header's file_size, so bounding the declared
+    # sizes bounds what the build below can write to disk.
+    total = 0
+    for info in archive.infolist():
+        total += info.file_size
+        if info.file_size > 1024 * 1024 and info.file_size > MAX_COMPRESSION_RATIO * max(info.compress_size, 1):
+            raise ValueError(f"GTFS-Feed: {info.filename} ist unplausibel stark komprimiert")
+    if total > FLIX_GTFS_MAX_UNCOMPRESSED_BYTES:
+        raise ValueError("GTFS-Feed ist entpackt zu groß")
+
+
 def _build_database(zip_path: Path, database_path: Path, metadata: dict[str, Any]) -> None:
     with zipfile.ZipFile(zip_path) as archive:
+        _check_archive_limits(archive)
         names = {Path(name).name for name in archive.namelist()}
         missing = REQUIRED - names
         if missing:
@@ -192,6 +237,7 @@ def _build_database(zip_path: Path, database_path: Path, metadata: dict[str, Any
 
 
 def _refresh_sync(force: bool = False) -> Path:
+    global _refresh_failures, _refresh_retry_at
     directory = Path(FLIX_GTFS_DIR); directory.mkdir(parents=True, exist_ok=True)
     database = directory / "flix.sqlite3"
     if database.exists() and not force and _database_current(database) and time.time() - database.stat().st_mtime < FLIX_GTFS_MAX_AGE:
@@ -205,28 +251,62 @@ def _refresh_sync(force: bool = False) -> Path:
             if previous.get("last_modified"): headers["If-Modified-Since"] = previous["last_modified"]
         except (OSError, ValueError):
             pass
+    if time.time() < _refresh_retry_at:
+        if database.exists():
+            return database
+        raise FeedRefreshBackoff("Flix-GTFS-Aktualisierung pausiert nach Fehler")
     try:
-        with httpx.Client(timeout=httpx.Timeout(FLIX_GTFS_TIMEOUT, connect=min(10, FLIX_GTFS_TIMEOUT)), follow_redirects=True, headers={"User-Agent": TRANSITOUS_USER_AGENT, "Accept": "application/zip"}) as client:
-            response = client.get(FLIX_GTFS_URL, headers=headers)
-        if response.status_code == 304 and database.exists():
-            os.utime(database, None); return database
-        response.raise_for_status()
-        if len(response.content) < 1024:
-            raise ValueError("GTFS-Download ist unerwartet klein")
-        metadata = {"url": FLIX_GTFS_URL, "etag": response.headers.get("etag"), "last_modified": response.headers.get("last-modified"), "downloaded_at": datetime.now(timezone.utc).isoformat()}
         with tempfile.TemporaryDirectory(dir=directory) as temporary:
-            zip_path = Path(temporary) / "feed.zip"; zip_path.write_bytes(response.content)
+            zip_path = Path(temporary) / "feed.zip"
+            response = _download_feed(zip_path, headers)
+            if response.status_code == 304:
+                if not database.exists():
+                    raise ValueError("GTFS-Server meldet 304 ohne vorhandenen Feed")
+                os.utime(database, None); _refresh_failures = 0; return database
+            metadata = {"url": FLIX_GTFS_URL, "etag": response.headers.get("etag"), "last_modified": response.headers.get("last-modified"), "downloaded_at": datetime.now(timezone.utc).isoformat()}
             new_database = Path(temporary) / "feed.sqlite3"
             _build_database(zip_path, new_database, metadata)
             os.replace(new_database, database)
         temporary_meta = directory / "feed.json.tmp"
         temporary_meta.write_text(json.dumps(metadata, indent=2)); os.replace(temporary_meta, meta_path)
+        _refresh_failures = 0
     except Exception:
+        _refresh_failures += 1
+        _refresh_retry_at = time.time() + min(REFRESH_BACKOFF_START * 2 ** (_refresh_failures - 1), REFRESH_BACKOFF_MAX)
         if database.exists():
             LOG.exception("Flix-GTFS-Aktualisierung fehlgeschlagen; letzter gültiger Feed bleibt aktiv")
             return database
         raise
     return database
+
+
+def _download_feed(zip_path: Path, headers: dict[str, str]) -> httpx.Response:
+    """Stream the feed to disk with a byte cap and an overall deadline.
+
+    The old code held the whole body in memory (response.content) with only a per-operation
+    timeout, so neither size nor total duration was bounded.
+    """
+    deadline = time.monotonic() + FLIX_GTFS_MAX_DOWNLOAD_SECONDS
+    with httpx.Client(timeout=httpx.Timeout(FLIX_GTFS_TIMEOUT, connect=min(10, FLIX_GTFS_TIMEOUT)), follow_redirects=True, headers={"User-Agent": TRANSITOUS_USER_AGENT, "Accept": "application/zip"}) as client:
+        with client.stream("GET", FLIX_GTFS_URL, headers=headers) as response:
+            if response.status_code == 304:
+                return response
+            response.raise_for_status()
+            declared = response.headers.get("content-length")
+            if declared and declared.isdigit() and int(declared) > FLIX_GTFS_MAX_DOWNLOAD_BYTES:
+                raise ValueError("GTFS-Download ist zu groß")
+            written = 0
+            with zip_path.open("wb") as out:
+                for chunk in response.iter_bytes():
+                    written += len(chunk)
+                    if written > FLIX_GTFS_MAX_DOWNLOAD_BYTES:
+                        raise ValueError("GTFS-Download ist zu groß")
+                    if time.monotonic() > deadline:
+                        raise TimeoutError("GTFS-Download dauert zu lange")
+                    out.write(chunk)
+            if written < 1024:
+                raise ValueError("GTFS-Download ist unerwartet klein")
+            return response
 
 
 async def ensure_feed(force: bool = False) -> Path:
@@ -296,8 +376,9 @@ def _search_sync(database: Path, request) -> dict[str, Any]:
     with sqlite3.connect(database) as db:
         db.row_factory = sqlite3.Row
         stops = list(db.execute("SELECT stop_id,name,parent_station,timezone FROM stop"))
-        origins = sorted(((stop_score(request.origin, r["name"]), r) for r in stops), reverse=True, key=lambda pair: pair[0])
-        destinations = sorted(((stop_score(request.destination, r["name"]), r) for r in stops), reverse=True, key=lambda pair: pair[0])
+        origin_score, destination_score = make_stop_scorer(request.origin), make_stop_scorer(request.destination)
+        origins = sorted(((origin_score(r["name"]), r) for r in stops), reverse=True, key=lambda pair: pair[0])
+        destinations = sorted(((destination_score(r["name"]), r) for r in stops), reverse=True, key=lambda pair: pair[0])
         origin_selection = getattr(request, "origin_station", None)
         destination_selection = getattr(request, "destination_station", None)
         selected_origin = origin_selection if origin_selection and origin_selection.id_for("flix") else None
@@ -380,7 +461,8 @@ async def search(request, *, force_refresh: bool = False) -> dict[str, Any]:
 def _stop_suggestions_sync(database: Path, query: str) -> list[dict[str, Any]]:
     with sqlite3.connect(database) as db:
         rows = db.execute("SELECT stop_id,name,timezone,latitude,longitude,parent_station FROM stop").fetchall()
-    ranked = sorted(((stop_score(query, row[1]), row) for row in rows), reverse=True, key=lambda item: (item[0], item[1][1]))
+    score = make_stop_scorer(query)
+    ranked = sorted(((score(row[1]), row) for row in rows), reverse=True, key=lambda item: (item[0], item[1][1]))
     output, names = [], set()
     for score, row in ranked:
         normalized = _key(row[1])

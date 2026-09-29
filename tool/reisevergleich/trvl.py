@@ -622,6 +622,18 @@ def _flight_rank_cost(item: dict[str, Any]) -> float:
     return round(price + stop_penalty * as_int(item.get("stops")) + hour_value * hours, 2)
 
 
+
+def _place_arg(value: str) -> str:
+    """A place name used as a trvl positional argument.
+
+    trvl would parse a leading '-' as a flag. The request models already reject that; this
+    keeps the guarantee for values that reach argv by any other path.
+    """
+    text = str(value)
+    if text.startswith("-"):
+        raise ValueError("place argument must not start with '-'")
+    return text
+
 async def flight_search(request: FlightRequest) -> dict[str, Any]:
     base = [
         TRVL_BIN,
@@ -873,7 +885,7 @@ async def hotel_search(request: HotelRequest) -> dict[str, Any]:
     base = [
         TRVL_BIN,
         "hotels",
-        request.location,
+        _place_arg(request.location),
         "--checkin", request.checkin_date,
         "--checkout", request.checkout_date,
         "--guests", str(request.adults),
@@ -1078,8 +1090,8 @@ async def flix_search(request: ReiseRequest) -> dict[str, Any]:
     command = [
         TRVL_BIN,
         "ground",
-        origin_query,
-        destination_query,
+        _place_arg(origin_query),
+        _place_arg(destination_query),
         request.travel_date,
         "--provider", "flixbus",
         "--currency", "EUR",
@@ -1387,7 +1399,7 @@ async def airport_transfer_search(
 
     def command(provider: str) -> list[str]:
         cmd = [
-            TRVL_BIN, "airport-transfer", airport_iata, destination, travel_date,
+            TRVL_BIN, "airport-transfer", _place_arg(airport_iata), _place_arg(destination), travel_date,
             "--provider", provider,
             "--currency", "EUR", "--format", "json",
         ]
@@ -1447,7 +1459,7 @@ async def return_transfer_search(
 
     def command(provider: str) -> list[str]:
         return [
-            TRVL_BIN, "ground", origin, destination, travel_date,
+            TRVL_BIN, "ground", _place_arg(origin), _place_arg(destination), travel_date,
             "--provider", provider,
             "--currency", "EUR", "--format", "json",
         ]
@@ -1482,7 +1494,7 @@ async def return_transfer_search(
     # multimodale Optionen finden, darf aber maximal einen Provider-Timeout lang laufen.
     if not routes and arrive_before and TRVL_ENABLED:
         route_command = [
-            TRVL_BIN, "route", origin, airport_iata, travel_date,
+            TRVL_BIN, "route", _place_arg(origin), _place_arg(airport_iata), travel_date,
             "--arrive-by", arrive_before,
             "--avoid", "flight",
             "--currency", "EUR",

@@ -11,12 +11,14 @@ import uuid
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from .keyed_locks import KeyedAsyncLocks
+
 CACHE_SCHEMA = 5
 DEFAULT_DB = "/var/lib/reisevergleich/cache.sqlite3"
 _stats_var: contextvars.ContextVar[dict[str, int] | None] = contextvars.ContextVar("reise_cache_stats", default=None)
 _refresh_var: contextvars.ContextVar[bool] = contextvars.ContextVar("reise_cache_refresh", default=False)
 _refreshed_keys_var: contextvars.ContextVar[set[str] | None] = contextvars.ContextVar("reise_cache_refreshed_keys", default=None)
-_locks: dict[str, asyncio.Lock] = {}
+_locks = KeyedAsyncLocks()
 
 
 def _json(value: Any) -> str:
@@ -134,11 +136,15 @@ def _set_component_sync(namespace: str, key_data: Any, value: Any, ttl: int) -> 
         db.commit()
 
 
+DEGRADED_STATUSES = frozenset({"failed", "manual_required", "partial", "unavailable"})
+
+
 def _cacheable_component(value: Any) -> bool:
-    return not (
-        isinstance(value, dict)
-        and value.get("status") in {"failed", "manual_required", "partial", "unavailable"}
-    )
+    # Some producers return (result, diagnostics). A failed DB search came back as a tuple,
+    # so the dict-only check never saw its status and cached it for every client.
+    if isinstance(value, tuple) and value:
+        value = value[0]
+    return not (isinstance(value, dict) and value.get("status") in DEGRADED_STATUSES)
 
 
 async def cached_call(
@@ -160,8 +166,7 @@ async def cached_call(
             _bump("component_hits")
             return cached
 
-    lock = _locks.setdefault(key, asyncio.Lock())
-    async with lock:
+    async with _locks.hold(key):
         refreshed_keys = _refreshed_keys_var.get()
         already_refreshed = bool(refreshed_keys is not None and key in refreshed_keys)
         if not effective_refresh or already_refreshed:
@@ -197,7 +202,11 @@ def _get_journey_sync(request_data: dict[str, Any]) -> tuple[str, dict[str, Any]
         ).fetchone()
         if row is None:
             return None
-        return row[0], json.loads(row[1])
+        result = json.loads(row[1])
+        # Rows written before degraded results stopped being saved must not be served.
+        if isinstance(result, dict) and result.get("status") in DEGRADED_STATUSES:
+            return None
+        return row[0], result
 
 
 def _save_journey_sync(request_data: dict[str, Any], result: dict[str, Any], ttl: int) -> str:

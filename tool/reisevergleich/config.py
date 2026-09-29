@@ -27,6 +27,11 @@ FLIX_GTFS_URL = os.getenv("FLIX_GTFS_URL", "https://api.transitous.org/gtfs/eu_f
 FLIX_GTFS_DIR = os.getenv("FLIX_GTFS_DIR", "/var/lib/reisevergleich/flix-gtfs")
 FLIX_GTFS_MAX_AGE = min(max(int(os.getenv("FLIX_GTFS_MAX_AGE", "86400")), 3600), 604800)
 FLIX_GTFS_TIMEOUT = min(max(int(os.getenv("FLIX_GTFS_TIMEOUT", "30")), 10), 120)
+# Hard bounds on the feed download and its expansion. Defaults leave headroom over the
+# real feed; a hostile or broken upstream can no longer fill the state volume.
+FLIX_GTFS_MAX_DOWNLOAD_BYTES = int(os.getenv("FLIX_GTFS_MAX_DOWNLOAD_BYTES", str(256 * 1024 * 1024)))
+FLIX_GTFS_MAX_UNCOMPRESSED_BYTES = int(os.getenv("FLIX_GTFS_MAX_UNCOMPRESSED_BYTES", str(4 * 1024 * 1024 * 1024)))
+FLIX_GTFS_MAX_DOWNLOAD_SECONDS = int(os.getenv("FLIX_GTFS_MAX_DOWNLOAD_SECONDS", "600"))
 
 # Harte Obergrenzen pro externer Quelle. Kein einzelner Anbieter darf die
 # Gesamtreise blockieren. Die Werte bleiben absichtlich deutlich unter dem
