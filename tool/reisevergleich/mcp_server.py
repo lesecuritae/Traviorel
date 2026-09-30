@@ -1,7 +1,7 @@
 """MCP-Server für Traviorel: Reisen suchen und vergleichen, Mobilfunk, Warnungen, historische Pünktlichkeit.
 
-Der Server läuft im selben Prozess wie Traviorel und ruft dessen Bausteine direkt auf (kein Umweg über HTTP). Er ist nur
-lesend: Traviorel bucht nichts. Eine Suche merkt sich ihre Verbindungen unter einer kurzen Nummer (``ref``); mit ihr
+Der Server läuft im selben Prozess wie Traviorel und ruft dessen Bausteine direkt auf (kein Umweg über HTTP).
+Traviorel bucht nichts; die Merkliste kann über MCP geändert werden. Eine Suche merkt sich ihre Verbindungen unter einer kurzen Nummer (``ref``); mit ihr
 fragen ``mobile_coverage``, ``travel_warnings`` und ``delay_history`` später genau diese Verbindung ab.
 """
 from __future__ import annotations
@@ -17,6 +17,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
 from . import delay_index, price_history as prices
+from .config import APP_VERSION
 from .coverage import analyze_route
 from .models import PriceCalendarRequest, TripRequest
 from .service import price_calendar, search
@@ -35,7 +36,7 @@ INSTRUCTIONS = (
 REF_TTL_SECONDS = 3600
 MAX_REFS = 400
 
-mcp = MCPServer("traviorel", instructions=INSTRUCTIONS)
+mcp = MCPServer("traviorel", version=APP_VERSION, instructions=INSTRUCTIONS)
 _refs: OrderedDict[str, tuple[float, dict[str, Any]]] = OrderedDict()
 
 

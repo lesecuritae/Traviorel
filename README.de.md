@@ -90,7 +90,7 @@ Die Warnungen verändern weder Verbindung, Ranking noch Preis und lösen keine a
 
 ## MCP-Server für KI-Assistenten
 
-Traviorel bringt unter `/mcp` (Streamable HTTP) einen MCP-Server mit. Ein Assistent kann damit Reisen suchen und zu einer Verbindung nachfragen. Nur Lesen: Traviorel bucht nichts.
+Traviorel bringt unter `/mcp` (Streamable HTTP) einen MCP-Server mit. Ein Assistent kann damit Reisen suchen und zu einer Verbindung nachfragen. Traviorel bucht nichts; `watch_route` und `stop_watching` ändern nur die lokale Merkliste. Die Antworten enthalten lesbaren Text und strukturierte Daten.
 
 | Werkzeug | Was es tut |
 |---|---|
@@ -107,7 +107,7 @@ Traviorel bringt unter `/mcp` (Streamable HTTP) einen MCP-Server mit. Ein Assist
 
 - **Verspätungsindex:** Die historischen Verspätungen stammen aus dem offenen Datensatz `piebro/deutsche-bahn-data` (CC BY 4.0). Beim ersten `delay_history` baut Traviorel im Hintergrund einen kleinen lokalen Index der letzten Monate auf (etwa 2 Minuten und 600 MB Download je Monat, einmalig; `DELAY_INDEX_MONTHS`, Standard 3). Danach antwortet die Abfrage sofort. Abschalten mit `DELAY_INDEX=0`.
 - **Preisverlauf:** Die Quellen liefern nur den aktuellen Preis, und es gibt keine offene Quelle für historische Ticketpreise. Traviorel schreibt deshalb bei jeder frischen Suche den günstigsten Preis je Anbieter, Strecke, Reisetag und Abrufdatum in eine kleine lokale Datenbank (`price-history.sqlite3` im Datenordner, zwei Jahre). Beobachtete Strecken fragt der Server einmal am Tag für Reisetage in 2, 7, 14, 21 und 28 Tagen ab (`PRICE_WATCH_INTERVAL_HOURS`). Der Verlauf beginnt leer und wird erst nach Wochen aussagekräftig. Abschalten mit `PRICE_HISTORY=0`.
-- **Einrichtung:** Adresse `https://<dein-server>/mcp`. In Open WebUI: Admin-Bereich → Einstellungen → Externe Werkzeuge → hinzufügen, Typ „MCP (Streamable HTTP)“.
+- **Einrichtung:** Adresse `https://<dein-server>/mcp`. Im gemeinsamen Docker-Netz kann Open WebUI `http://traviorel-app:8000/mcp` verwenden. In Open WebUI unter Admin-Einstellungen → Integrationen eine MCP-Verbindung (Streamable HTTP) hinzufügen. Danach steht „Traviorel“ in der Werkzeugauswahl der Chats; die lesbaren Werkzeugantworten erscheinen im Chat.
 - Abschalten: `TRAVIOREL_MCP=0`.
 
 ## trvl ist optional

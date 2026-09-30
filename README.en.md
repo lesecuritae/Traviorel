@@ -88,6 +88,12 @@ After a successful search, Traviorel separately loads current official NINA/BBK 
 
 Warnings never alter connections, ranking, or prices and cannot trigger automatic replanning. Lists, geometries, and details are cached for five minutes. If the service is unavailable or no relevant warning exists, the journey output remains unchanged.
 
+## MCP server for AI assistants
+
+Traviorel serves Streamable HTTP MCP at `/mcp`. It provides travel search, live delays, price history, warnings, and station lookup as readable text and structured data. It cannot book travel; `watch_route` and `stop_watching` only change the local route watch list.
+
+In Open WebUI, add a Streamable HTTP MCP connection under Admin Settings → Integrations. Use `http://traviorel-app:8000/mcp` when both services share a Docker network, or `https://<your-server>/mcp` when accessing Traviorel through its public HTTPS host. Select “Traviorel” in the chat tools to show its results in the chat. Set `TRAVIOREL_MCP=0` to disable the endpoint.
+
 ## Why trvl is included
 
 While looking for usable data sources, I found [trvl](https://github.com/MikkoParkkola/trvl).

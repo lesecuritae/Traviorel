@@ -4,7 +4,7 @@ Diese Version bündelt die seit 0.3.0 entwickelte Reiseplanung und die geprüfte
 
 ## Neu und verbessert
 
-- Aktuelle DB-Verspätungen, ein lokaler Verspätungsindex, Preisverläufe und zusätzliche lesende MCP-Werkzeuge.
+- Aktuelle DB-Verspätungen, ein lokaler Verspätungsindex, Preisverläufe und zusätzliche MCP-Werkzeuge. Open WebUI kann den Streamable-HTTP-Endpunkt `/mcp` direkt einbinden; der Server liefert lesbaren Text und strukturierte Daten.
 - Direkte Flix-Preise, Flughafen-Transfers über Transitous sowie Flug- und Hotelsuche über Skiplagged mit den vorhandenen Rückfallwegen.
 - Optionales `traviorel-app-lite` ohne trvl. Das Standardimage verwendet weiterhin das fest gepinnte trvl v1.21.4.
 - Bessere Prüfung von Reiseeingaben und HTTP-Weiterleitungen, begrenzte GTFS-Downloads und dbnav-Abfragen sowie kein gemeinsames Caching fehlgeschlagener Ergebnisse.

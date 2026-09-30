@@ -22,7 +22,7 @@ UI = ROOT / "ui"
 
 
 def _mcp_app():
-    """MCP-Server unter /mcp (nur lesend); mit TRAVIOREL_MCP=0 abschaltbar."""
+    """MCP-Server unter /mcp; mit TRAVIOREL_MCP=0 abschaltbar."""
     if os.environ.get("TRAVIOREL_MCP", "1") == "0":
         return None
     from mcp.server.transport_security import TransportSecuritySettings
