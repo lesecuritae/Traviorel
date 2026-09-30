@@ -1,7 +1,9 @@
 import asyncio
 import os
 import tempfile
+from datetime import datetime, timedelta, time
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 _tmp = Path(tempfile.mkdtemp())
 os.environ["DELAY_INDEX_DB"] = str(_tmp / "delay-index.sqlite3")
@@ -96,9 +98,16 @@ route = asyncio.run(enriched())
 assert route["legs"][0]["reliability"]["fallback_level"] == "index", route["legs"][0]["reliability"]
 
 # ---- aktuelle Verspätungen -------------------------------------------------------------------------------------
-late = {"provider": "Deutsche Bahn", "type": "train", "origin": "Leipzig Hbf", "destination": "Berlin Hbf", "departure": "2026-09-20T18:51+02:00", "arrival": "2026-09-20T20:05+02:00",
+live_day = datetime.now(ZoneInfo("Europe/Berlin")).date() + timedelta(days=1)
+
+
+def live_time(hour, minute):
+    return datetime.combine(live_day, time(hour, minute), ZoneInfo("Europe/Berlin")).isoformat(timespec="minutes")
+
+
+late = {"provider": "Deutsche Bahn", "type": "train", "origin": "Leipzig Hbf", "destination": "Berlin Hbf", "departure": live_time(18, 51), "arrival": live_time(20, 5),
         "duration_minutes": 74, "transfers": 0, "price": 70.1, "legs": [{"mode": "train", "line_name": "ICE 90", "train_number": "90", "train_type": "ICE", "origin": "Leipzig Hbf", "destination": "Berlin Hbf",
-        "departure": "2026-09-20T18:51+02:00", "arrival": "2026-09-20T20:05+02:00", "departure_delay_minutes": 35, "arrival_delay_minutes": 34, "platform": "14", "planned_platform": "12"}]}
+        "departure": live_time(18, 51), "arrival": live_time(20, 5), "departure_delay_minutes": 35, "arrival_delay_minutes": 34, "platform": "14", "planned_platform": "12"}]}
 assert mcp_server._live_summary(late) == " – aktuell +34 min am Ziel"
 assert mcp_server._live_summary({"legs": [{"cancelled": True}]}) == " – ein Zug fällt aus" and mcp_server._live_summary({"legs": [{"arrival_delay_minutes": 0}]}) == ""
 assert mcp_server._live_summary({"legs": [{"arrival_delay_minutes": None}]}) == "" and mcp_server._live_summary({}) == ""
@@ -108,15 +117,15 @@ seen = []
 
 async def fake_search(request):
     seen.append((request.refresh_cache, request.departure_date, request.departure_after))
-    return {"response_context": {"outbound": {"connections": [late, {**late, "departure": "2026-09-20T19:16+02:00", "legs": [{**late["legs"][0], "train_number": "596"}]}]}}}
+    return {"response_context": {"outbound": {"connections": [late, {**late, "departure": live_time(19, 16), "legs": [{**late["legs"][0], "train_number": "596"}]}]}}}
 
 original_search = mcp_server.search
 mcp_server.search = fake_search
 live_ref = mcp_server._remember([late])[0]
 text = asyncio.run(mcp_server.live_delays(live_ref)).content[0].text
-assert seen == [(True, "2026-09-20", "18:31")], seen
+assert seen == [(True, live_day.isoformat(), "18:31")], seen
 assert "ICE 90: Abfahrt 18:51 +35 min (erwartet 19:26), Ankunft 20:05 +34 min (erwartet 20:39), Gleis 14 (geplant 12)" in text, text
-gone = mcp_server._remember([{**late, "departure": "2026-09-20T17:00+02:00"}])[0]
+gone = mcp_server._remember([{**late, "departure": live_time(17, 0)}])[0]
 assert "nicht mehr bei der Bahn" in asyncio.run(mcp_server.live_delays(gone)).content[0].text
 mcp_server.search = original_search
 print("Verspätungsindex und MCP-Hilfen: OK")

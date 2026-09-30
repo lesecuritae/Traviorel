@@ -1068,31 +1068,40 @@ async function ensurePricedJourney(client, profileName, journey, body, timeoutMs
   return refreshJourneySafely(client, profileName, journey, {...body, with_prices: true}, timeoutMs);
 }
 
-async function findExactJourney(client, profileName, from, to, targetDeparture, expectedArrival, expectedSignature, body) {
-  // Split lookups go through the same global dbnav gate and circuit breaker as
-  // searchJourneys. They used to call client.journeys directly, so a split check could
-  // exceed DBNAV_MAX_CONCURRENCY and keep hitting dbnav while it answered OPS_BLOCKED.
-  const lookup = () => withTimeout(client.journeys(from, to, {
-    departure: targetDeparture,
-    results: 6,
-    stopovers: true,
-    remarks: true,
-    notOnlyFastRoutes: true,
-    transfers: 8,
-    firstClass: Boolean(body.first_class),
-    age: Number.isInteger(body.age) ? body.age : undefined,
-    language: 'de',
-    products: allProducts,
-  }), SPLIT_REQUEST_TIMEOUT_MS, `${profileName} split journey ${from} -> ${to}`);
-  const response = profileName === 'dbnav' ? await withDbnavSlot(lookup) : await lookup();
+async function ensurePricedJourneyWithProfileGate(client, profileName, journey, body) {
+  if (bestMoney(journey).price !== null) return journey;
+  if (profileName === 'dbnav') {
+    return withDbnavSlot(() => ensurePricedJourney(client, profileName, journey, body));
+  }
+  return ensurePricedJourney(client, profileName, journey, body);
+}
 
-  const candidates = (response?.journeys || [])
-    .filter((journey) => candidateMatchesExpected(journey, expectedSignature))
-    .map((journey) => ({journey, score: journeyTimeScore(journey, targetDeparture, expectedArrival)}))
-    .filter((entry) => Number.isFinite(entry.score))
-    .sort((a, b) => a.score - b.score);
-  if (!candidates.length) return null;
-  return ensurePricedJourney(client, profileName, candidates[0].journey, body, SPLIT_REQUEST_TIMEOUT_MS);
+async function findExactJourney(client, profileName, from, to, targetDeparture, expectedArrival, expectedSignature, body) {
+  // Hold one dbnav slot through both the lookup and any price refresh. Releasing it
+  // between the two calls let split analyses exceed the global dbnav limit.
+  const lookup = async () => {
+    const response = await withTimeout(client.journeys(from, to, {
+      departure: targetDeparture,
+      results: 6,
+      stopovers: true,
+      remarks: true,
+      notOnlyFastRoutes: true,
+      transfers: 8,
+      firstClass: Boolean(body.first_class),
+      age: Number.isInteger(body.age) ? body.age : undefined,
+      language: 'de',
+      products: allProducts,
+    }), SPLIT_REQUEST_TIMEOUT_MS, `${profileName} split journey ${from} -> ${to}`);
+
+    const candidates = (response?.journeys || [])
+      .filter((journey) => candidateMatchesExpected(journey, expectedSignature))
+      .map((journey) => ({journey, score: journeyTimeScore(journey, targetDeparture, expectedArrival)}))
+      .filter((entry) => Number.isFinite(entry.score))
+      .sort((a, b) => a.score - b.score);
+    if (!candidates.length) return null;
+    return ensurePricedJourney(client, profileName, candidates[0].journey, body, SPLIT_REQUEST_TIMEOUT_MS);
+  };
+  return profileName === 'dbnav' ? withDbnavSlot(lookup) : lookup();
 }
 
 function normalizeSplitSegment(journey, index) {
@@ -1171,7 +1180,7 @@ async function splitAnalyze(body) {
   const client = clients[profileName];
   if (!client) throw new HttpError(500, `unknown cached DB profile: ${profileName}`);
   let journey = cached.journey;
-  journey = await ensurePricedJourney(client, profileName, journey, body);
+  journey = await ensurePricedJourneyWithProfileGate(client, profileName, journey, body);
   const originalMoney = bestMoney(journey);
   if (originalMoney.price === null || originalMoney.partialFare) {
     return {
@@ -1530,6 +1539,46 @@ async function runSelfTests() {
     if (splitPeak > DBNAV_MAX_CONCURRENCY || splitCalls !== DBNAV_MAX_CONCURRENCY * 3) {
       throw new Error(`self-test split lookups exceeded the dbnav gate: peak=${splitPeak} calls=${splitCalls}`);
     }
+    const unpricedSplit = {
+      refreshToken: 'split-refresh',
+      legs: [{
+        tripId: 'split-trip',
+        plannedDeparture: '2030-08-15T04:00:00.000Z',
+        plannedArrival: '2030-08-15T06:00:00.000Z',
+      }],
+    };
+    let refreshActive = 0;
+    let refreshPeak = 0;
+    const refreshClient = {
+      journeys: async () => ({journeys: [unpricedSplit]}),
+      refreshJourney: async () => {
+        refreshActive += 1;
+        refreshPeak = Math.max(refreshPeak, refreshActive);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        refreshActive -= 1;
+        return {journey: {...unpricedSplit, price: {amount: 10, currency: 'EUR'}}};
+      },
+    };
+    const refreshedSplits = await Promise.all(Array.from({length: DBNAV_MAX_CONCURRENCY * 3}, () => findExactJourney(
+      refreshClient, 'dbnav', 'A', 'B', new Date('2030-08-15T06:00:00+02:00'),
+      new Date('2030-08-15T08:00:00+02:00'), {tripIds: ['split-trip'], lines: []}, {},
+    )));
+    if (refreshPeak > DBNAV_MAX_CONCURRENCY || refreshedSplits.some((journey) => bestMoney(journey).price !== 10)) {
+      throw new Error(`self-test split price refresh escaped the dbnav gate: peak=${refreshPeak}`);
+    }
+    dbnavBlockedUntil = Date.now() + 5000;
+    const pricedSplit = {...unpricedSplit, price: {amount: 10, currency: 'EUR'}};
+    if (await ensurePricedJourneyWithProfileGate(refreshClient, 'dbnav', pricedSplit, {}) !== pricedSplit) {
+      throw new Error('self-test priced split should not need a dbnav slot');
+    }
+    let refreshBlocked = false;
+    try {
+      await ensurePricedJourneyWithProfileGate(refreshClient, 'dbnav', unpricedSplit, {});
+    } catch (error) {
+      refreshBlocked = error?.code === 'DBNAV_CIRCUIT_OPEN';
+    }
+    if (!refreshBlocked) throw new Error('self-test split price refresh ignored the dbnav circuit');
+    dbnavBlockedUntil = 0;
     splitPeak = 0;
     await Promise.all(Array.from({length: 4}, () => findExactJourney(
       splitClient, 'db', 'A', 'B', new Date('2030-08-15T06:00:00+02:00'), new Date('2030-08-15T08:00:00+02:00'), null, {},
