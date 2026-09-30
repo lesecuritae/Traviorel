@@ -27,7 +27,7 @@ services:
     container_name: traviorel-db-api
     environment:
       PORT: "3001"
-      USER_AGENT: traviorel/0.3.0
+      USER_AGENT: traviorel/0.3.1
       DB_CFFI_BRIDGE_URL: http://app:8000/internal/db-cffi/request
       DB_CFFI_TOKEN: "${DB_CFFI_TOKEN:-}"
       DB_CFFI_TOKEN_FILE: /run/traviorel-secrets/db_cffi_token

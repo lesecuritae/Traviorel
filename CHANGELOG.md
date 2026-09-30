@@ -1,5 +1,7 @@
 # Changelog
-## Unveröffentlicht
+## 0.3.1 - 2026-09-30
+
+- Sicherheits- und Stabilitätskorrekturen: Begrenzte Eingaben, GTFS-Downloads und parallele dbnav-Abfragen; fehlgeschlagene Suchergebnisse landen nicht mehr im gemeinsamen Cache. Die Split-Analyse hält die dbnav-Grenze auch während der Preisaktualisierung ein.
 
 - Flughafen-Transfers über Transitous: Für BER, Frankfurt und Stuttgart fand der öffentliche Nahverkehr nie eine Verbindung („nicht sicher gefunden“). Ursache waren die Suchtexte: Für deutsche Flughäfen wurde „<Stadt> Airport <Code>“ gesucht, und BER und Stuttgart hatten Namen, die Transitous nicht kennt. Jetzt heißen sie „Berlin Brandenburg Airport“ und „Flughafen/Messe“, und DB-Bahnhöfe mit Klammern („Frankfurt(Main)Hbf“) werden so geschrieben, wie Transitous sie führt. Alle zehn deutschen Verkehrsflughäfen liefern damit Verbindungen (Stichprobe zum Hauptbahnhof).
 - Aktuelle Verspätungen: Die DB-Schnittstelle gibt je Abschnitt jetzt Verspätung bei Abfahrt und Ankunft, Ausfall und Gleis mit aus. Bahnzeilen im MCP zeigen „aktuell +34 min am Ziel“ oder „ein Zug fällt aus“; das neue Werkzeug `live_delays` fragt eine Verbindung frisch ab und nennt je Zug Plan und erwartete Zeit. Echtzeitangaben gibt es nur kurz vor und während der Fahrt.
