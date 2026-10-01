@@ -385,6 +385,12 @@ Live-Tests benötigen erreichbare externe Provider und werden getrennt von den r
 
 ## Roadmap
 
+### Traviorel und trvl gemeinsam über MCP
+
+Solange trvl im Standardimage enthalten ist, soll sein eigener MCP-Server optional als zweiter, nur im Docker-Netz erreichbarer Dienst laufen. Open WebUI erhält dafür eine separate Verbindung zum `travel`-Werkzeug von trvl. Traviorels `/mcp` mit seinen eigenen Werkzeugen bleibt bestehen; beide Verbindungen sollen im selben Chat auswählbar sein. Ein temporärer Test mit `traviorel_find_station` und `trvl_travel` im selben Open-WebUI-Chat war erfolgreich.
+
+Für den dauerhaften Betrieb fehlen noch ein Compose-Dienst für `trvl mcp`, ein sicher verwalteter Lesetoken, Zustands- und Healthchecks sowie die dokumentierte Einrichtung und ein Wiederanlauftest in Open WebUI. Der trvl-Endpunkt soll keinen öffentlichen Port erhalten. Schreibende trvl-Funktionen bleiben mit dem Lesetoken gesperrt. Wenn eigene Provider trvl später ersetzen, kann diese optionale MCP-Verbindung entfallen, ohne Traviorels `/mcp` zu ändern.
+
 ### Coming soon: eigene Provider statt trvl
 
 Der nächste größere Schritt ist bereits geplant: **trvl soll schrittweise vollständig aus Traviorel verschwinden.**
