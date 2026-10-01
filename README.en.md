@@ -8,7 +8,7 @@
 
 Rail, the Deutschlandticket, split tickets, FlixTrain, FlixBus, flights, airport feeders, transfers, and accommodation are combined into a single itinerary. Traviorel does not merely look for a low price somewhere. Every part of the journey must fit together both chronologically and logically.
 
-Current version: **0.3.1**
+Current version: **0.3.2**
 
 Traviorel does not sell or book anything itself. If a provider supplies a usable offer link, it can be opened directly from the result. Where no direct link is available, Traviorel offers a suitable manual cross-check, for example with Deutsche Bahn, Google Flights, Google Hotels, or Google Maps. Price and availability must always be verified with the actual provider.
 
@@ -326,7 +326,7 @@ docker compose build
 docker compose up -d
 ```
 
-trvl is pinned through `TRVL_REF` and `TRVL_COMMIT`; Traviorel 0.3.1 uses `v1.21.4` (commit `0d5bbc49`) by default. The build fails if the tag no longer resolves to that commit, so bump both together after reviewing the new upstream commit.
+trvl is pinned through `TRVL_REF` and `TRVL_COMMIT`; Traviorel 0.3.2 uses `v1.24.0` (commit `4f2b0d0`) by default. The build fails if the tag no longer resolves to that commit, so bump both together after reviewing the new upstream commit.
 
 ## Unambiguous station selection
 
@@ -426,7 +426,7 @@ trademarks and names.
 Traviorel code originating from this repository is available under the
 [MIT License](LICENSE).
 
-Third parties retain their own licences. Of particular importance is `trvl v1.21.4`,
+Third parties retain their own licences. Of particular importance is `trvl v1.24.0`,
 which is licensed under the **PolyForm Noncommercial License 1.0.0**. Traviorel's MIT
 licence does not override trvl's non-commercial restriction. Anyone wishing to use the
 complete default stack commercially must review trvl's licence terms separately.

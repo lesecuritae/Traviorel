@@ -6,8 +6,8 @@ services:
     build:
       context: ./tool
       args:
-        TRVL_REF: ${TRVL_REF:-v1.21.4}
-        TRVL_COMMIT: ${TRVL_COMMIT:-0d5bbc4947f102de12e7a277cec3c714c40e1656}
+        TRVL_REF: ${TRVL_REF:-v1.24.0}
+        TRVL_COMMIT: ${TRVL_COMMIT:-4f2b0d099e51931584826d4feecb14a2cfab5f66}
         WITH_TRVL: ${WITH_TRVL:-1}
     command: ["python", "/app/init_db_cffi_token.py"]
     user: "0:0"
@@ -27,7 +27,7 @@ services:
     container_name: traviorel-db-api
     environment:
       PORT: "3001"
-      USER_AGENT: traviorel/0.3.1
+      USER_AGENT: traviorel/0.3.2
       DB_CFFI_BRIDGE_URL: http://app:8000/internal/db-cffi/request
       DB_CFFI_TOKEN: "${DB_CFFI_TOKEN:-}"
       DB_CFFI_TOKEN_FILE: /run/traviorel-secrets/db_cffi_token
@@ -54,8 +54,8 @@ services:
     build:
       context: ./tool
       args:
-        TRVL_REF: ${TRVL_REF:-v1.21.4}
-        TRVL_COMMIT: ${TRVL_COMMIT:-0d5bbc4947f102de12e7a277cec3c714c40e1656}
+        TRVL_REF: ${TRVL_REF:-v1.24.0}
+        TRVL_COMMIT: ${TRVL_COMMIT:-4f2b0d099e51931584826d4feecb14a2cfab5f66}
         WITH_TRVL: ${WITH_TRVL:-1}
     container_name: traviorel-app
     depends_on:

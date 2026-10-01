@@ -272,7 +272,7 @@ def _download_month(url: str, directory: Path) -> Path:
     try:
         response = curl_requests.get(
             url,
-            headers={"User-Agent": "Traviorel/0.3.1"},
+            headers={"User-Agent": "Traviorel/0.3.2"},
             impersonate="firefox",
             timeout=HISTORY_REMOTE_TIMEOUT,
             allow_redirects=True,

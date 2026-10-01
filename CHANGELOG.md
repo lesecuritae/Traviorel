@@ -1,4 +1,10 @@
 # Changelog
+## 0.3.2 - 2026-10-01
+
+- Das Standardimage verwendet jetzt trvl v1.24.0 (gepinnt auf Commit `4f2b0d0`). Die von Traviorel verwendeten fünf CLI-Befehle und ihre Flags wurden gegen das offizielle Release-Binary geprüft; die JSON-Modelltypen blieben gegenüber v1.21.4 unverändert.
+- Upstream bringt einen neueren Wizz-Air-API-Stand und aktualisierte Go-Abhängigkeiten mit. Die neuen Open-Jaw-, Sitzplatz- und MCP-Funktionen von trvl ändern Traviorels eigene Reiseplanung und seinen eigenen `/mcp`-Endpunkt nicht automatisch.
+- Die Docker-Buildprüfung deckt zusätzlich die von Traviorel genutzten Transfer- und Routenflags ab.
+
 ## 0.3.1 - 2026-09-30
 
 - Sicherheits- und Stabilitätskorrekturen: Begrenzte Eingaben, GTFS-Downloads und parallele dbnav-Abfragen; fehlgeschlagene Suchergebnisse landen nicht mehr im gemeinsamen Cache. Die Split-Analyse hält die dbnav-Grenze auch während der Preisaktualisierung ein.

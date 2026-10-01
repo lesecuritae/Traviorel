@@ -25,13 +25,13 @@ jobs:
             image: lesecuritae/traviorel-app
             context: ./tool
             dockerfile: ./tool/Dockerfile
-            build_args: TRVL_REF=v1.21.4
+            build_args: TRVL_REF=v1.24.0
           - service: app-lite
             image: lesecuritae/traviorel-app-lite
             context: ./tool
             dockerfile: ./tool/Dockerfile
             build_args: |
-              TRVL_REF=v1.21.4
+              TRVL_REF=v1.24.0
               WITH_TRVL=0
           - service: db-api
             image: lesecuritae/traviorel-db-api
