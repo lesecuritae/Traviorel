@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote, urlencode
 
@@ -48,9 +48,11 @@ def route_departure_in_window(
     if not parsed:
         return False
     requested = datetime.fromisoformat(f"{travel_date}T{departure_after}:00").replace(tzinfo=TZ)
-    local = parsed.astimezone(TZ)
+    departure_utc = parsed.astimezone(timezone.utc)
     tolerance = min(max(int(tolerance_minutes), 0), 60)
-    return requested - timedelta(minutes=tolerance) <= local < requested.replace(hour=0, minute=0) + timedelta(days=1)
+    start = requested.astimezone(timezone.utc) - timedelta(minutes=tolerance)
+    end = (requested.replace(hour=0, minute=0) + timedelta(days=1)).astimezone(timezone.utc)
+    return start <= departure_utc < end
 
 
 def departure_offset_minutes(route: dict[str, Any], travel_date: str, departure_after: str) -> int | None:
@@ -61,7 +63,7 @@ def departure_offset_minutes(route: dict[str, Any], travel_date: str, departure_
     if parsed is None:
         return None
     requested = datetime.fromisoformat(f"{travel_date}T{departure_after}:00").replace(tzinfo=TZ)
-    return round((parsed.astimezone(TZ) - requested).total_seconds() / 60)
+    return round((parsed.astimezone(timezone.utc) - requested.astimezone(timezone.utc)).total_seconds() / 60)
 
 
 def departure_search_floor(travel_date: str, departure_after: str) -> tuple[str, str]:

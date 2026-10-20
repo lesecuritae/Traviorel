@@ -119,3 +119,28 @@ def test_provider_states_distinguish_empty_and_failure():
     bus_only = ReiseRequest(origin="Leipzig", destination="Dortmund", travel_date=DATE, include_train=False, include_bus=True)
     assert compare._transport_selected(train, train_only) and not compare._transport_selected(bus, train_only)
     assert compare._transport_selected(bus, bus_only) and not compare._transport_selected(train, bus_only)
+
+
+def test_dst_transitions_absolute_elapsed(monkeypatch):
+    from zoneinfo import ZoneInfo
+
+    from reisevergleich import utils
+
+    monkeypatch.setattr(utils, "TZ", ZoneInfo("Europe/Berlin"))
+    cases = [
+        ("2026-10-25", "02:45", "2026-10-25T02:15:00+01:00", 30, 0, True),
+        ("2026-03-29", "01:45", "2026-03-29T03:15:00+02:00", 30, 0, True),
+        ("2026-03-29", "03:05", "2026-03-29T01:50:00+01:00", -15, 15, True),
+        ("2026-03-29", "03:05", "2026-03-29T01:49:00+01:00", -16, 15, False),
+        ("2026-10-25", "03:05", "2026-10-25T02:50:00+01:00", -15, 15, True),
+        ("2026-10-25", "03:05", "2026-10-25T02:50:00+02:00", -75, 15, False),
+        ("2026-10-25", "02:45", "2026-10-25T23:59:00+01:00", 1334, 0, True),
+        ("2026-10-25", "02:45", "2026-10-26T00:00:00+01:00", 1335, 0, False),
+        ("2026-03-29", "01:45", "2026-03-30T00:00:00+02:00", 1275, 0, False),
+    ]
+    for date, query, departure, offset, tolerance, accepted in cases:
+        candidate = {"departure": departure}
+        assert utils.departure_offset_minutes(candidate, date, query) == offset
+        assert utils.route_departure_in_window(
+            candidate, date, query, tolerance_minutes=tolerance,
+        ) is accepted
