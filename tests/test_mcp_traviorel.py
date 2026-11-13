@@ -25,26 +25,30 @@ delay_index._state.update(running=False, current=None, done=[], error=None)
 assert delay_index.wanted_months(__import__("datetime").date(2026, 9, 20), 3) == ["2026-08", "2026-07", "2026-06"]
 assert delay_index.wanted_months(__import__("datetime").date(2026, 1, 5), 2) == ["2025-12", "2025-11"]
 
+# build_month() keeps only the months inside wanted_months(count=MONTHS) relative to the real
+# wall-clock date, so the synthetic month under test must track "today", not a fixed string -
+# a hardcoded month is a time bomb that fails on its own once that trailing window moves past it.
+_test_month = delay_index.wanted_months(count=1)[0]
 rows = []
 for index in range(10):  # ICE 606 in Hamburg: 10 Ankünfte mit 0, 0, 3, 3, 6, 8, 12, 12, 40 Minuten und einem Ausfall
     delay = [0, 0, 3, 3, 6, 8, 12, 12, 40, 0][index]
     cancelled = index == 9
-    rows.append(("ICE", "606", "08002549", f"2026-08-{index + 1:02d} 09:24:00", delay, cancelled))
-rows.append(("ICE", "606", "08002549", "2026-08-20 09:24:00", 0, False))
-rows.append(("Bus", "1", "08002549", "2026-08-20 09:24:00", 5, False))
+    rows.append(("ICE", "606", "08002549", f"{_test_month}-{index + 1:02d} 09:24:00", delay, cancelled))
+rows.append(("ICE", "606", "08002549", f"{_test_month}-20 09:24:00", 0, False))
+rows.append(("Bus", "1", "08002549", f"{_test_month}-20 09:24:00", 5, False))
 values = ", ".join(f"('{t}', '{n}', '{e}', TIMESTAMP '{ts}', TIMESTAMP '{ts}' + INTERVAL {d} MINUTE, {str(c).lower()})" for t, n, e, ts, d, c in rows)
 duckdb.connect().execute(
     f"COPY (SELECT * FROM (VALUES {values}) AS v(train_type, train_number, eva, arrival_planned_time, arrival_change_time, arrival_is_canceled)) "
-    f"TO '{_tmp}/data-2026-08.parquet' (FORMAT parquet)"
+    f"TO '{_tmp}/data-{_test_month}.parquet' (FORMAT parquet)"
 )
-assert delay_index.build_month("2026-08") == 1, "nur Zugarten der Bahn, eine Gruppe je Zug und Halt"
+assert delay_index.build_month(_test_month) == 1, "nur Zugarten der Bahn, eine Gruppe je Zug und Halt"
 stats = asyncio.run(delay_index.arrival_stats("ice", "606", "8002549"))
 assert stats["events"] == 11 and stats["ran"] == 10 and stats["cancelled_percent"] == 9.1
 assert stats["on_time_5_percent"] == 50 and stats["on_time_10_percent"] == 70 and stats["within_30_percent"] == 90
 assert abs(stats["average_delay_minutes"] - 8.4) < 0.11
 assert asyncio.run(delay_index.arrival_stats("ICE", "606", "08002549")) == stats, "führende Nullen der EVA-Nummer sind egal"
 assert asyncio.run(delay_index.arrival_stats("ICE", "999", "8002549")) is None
-assert delay_index.built_months() == ["2026-08"]
+assert delay_index.built_months() == [_test_month]
 
 # ---- MCP: Merkliste, Zeilen, Pünktlichkeit mit Umstieg ------------------------------------------------
 mcp_server._refs.clear()

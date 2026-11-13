@@ -2,10 +2,10 @@
 FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS trvl-builder
 ARG TARGETOS=linux
 ARG TARGETARCH
-ARG TRVL_REF=v1.24.0
+ARG TRVL_REF=v1.27.0
 # Tags are mutable. The build must land on this exact commit or fail; bump both together
 # after reviewing the new upstream commit.
-ARG TRVL_COMMIT=4f2b0d099e51931584826d4feecb14a2cfab5f66
+ARG TRVL_COMMIT=4f6b5da14874b34260bdfa2c114fb9b4800223c6
 # WITH_TRVL=0 baut ein Image ohne trvl (und ohne dessen Noncommercial-Lizenz); Traviorel läuft dann mit den Direktwegen.
 ARG WITH_TRVL=1
 RUN case "$TRVL_REF" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "TRVL_REF must be a version tag such as v1.24.0" >&2; exit 2 ;; esac \
