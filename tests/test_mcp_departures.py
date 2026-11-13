@@ -106,3 +106,35 @@ def test_ambiguous_station_requests_selection_without_querying_board(monkeypatch
     result = asyncio.run(mcp.next_departures("Start"))
     assert result.structured_content["status"] == "needs_selection"
     assert len(result.structured_content["stations"]) == 2
+
+
+def test_unspecified_mode_reads_close_bus_and_train_stops_separately(monkeypatch):
+    clock(monkeypatch)
+    rail = {"name": "Start Bahnhof", "provider": "db", "provider_id": "8000001",
+            "modes": ["SUBURBAN"], "latitude": 51.0, "longitude": 12.0}
+    bus = {"name": "Start Bahnhof (Bus)", "provider": "db", "provider_id": "8000002",
+           "modes": ["BUS"], "latitude": 51.0001, "longitude": 12.0}
+    async def stations(*args, **kwargs):
+        return {"query": "Start Bahnhof", "auto_selection": rail, "stations": [rail, bus], "transport_mode": "all"}
+    calls = []
+    async def fetch(payload):
+        calls.append(payload)
+        departure = row("East")
+        departure.update(product="bus" if payload["transport_mode"] == "bus" else "suburban")
+        return {"status": "ok", "departures": [departure]}
+    monkeypatch.setattr(mcp, "search_stations", stations)
+    monkeypatch.setattr(mcp, "db_departures", fetch)
+    result = asyncio.run(mcp.next_departures("Start Bahnhof"))
+    assert not result.is_error
+    assert {p["transport_mode"] for p in calls} == {"bus", "local_train"}
+    assert len(calls) == 2
+    assert set(result.structured_content["by_transport"]) == {"bus", "local_train"}
+
+
+def test_far_apart_or_explicit_mode_is_never_an_automatic_double_query():
+    from reisevergleich.station_catalog import nearby_modal_options
+    rail = {"name": "Start Bahnhof", "provider_id": "rail", "modes": ["SUBURBAN"], "latitude": 51.0, "longitude": 12.0}
+    bus = {"name": "Start Bahnhof (Bus)", "provider_id": "bus", "modes": ["BUS"], "latitude": 52.0, "longitude": 12.0}
+    base = {"query": "Start Bahnhof", "auto_selection": rail, "stations": [rail, bus]}
+    assert nearby_modal_options(base) == []
+    assert nearby_modal_options(base | {"transport_mode": "bus"}) == []

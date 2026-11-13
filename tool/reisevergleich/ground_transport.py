@@ -1,7 +1,17 @@
 """Provider-independent checks for explicit ground transport selections."""
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
+from pydantic import BeforeValidator
 
-GroundTransportMode = Literal["all", "suburban", "bus", "local_train"]
+def normalize_transport_mode(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    key = value.strip().casefold()
+    return {"s-bahn": "suburban", "s bahn": "suburban", "sbahn": "suburban",
+            "re": "local_train", "rb": "local_train", "zug": "local_train",
+            "nahverkehr": "local_train", "nahverkehrszug": "local_train"}.get(key, key)
+
+
+GroundTransportMode = Annotated[Literal["all", "suburban", "bus", "local_train"], BeforeValidator(normalize_transport_mode)]
 
 
 def route_matches_transport(route: dict[str, Any], transport_mode: GroundTransportMode) -> bool:

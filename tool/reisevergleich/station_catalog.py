@@ -163,6 +163,33 @@ def _station_mode_match(item: dict[str, Any], transport_mode: GroundTransportMod
     return bool(modes & selected)
 
 
+def _query_matches_station(query: str, item: dict[str, Any]) -> bool:
+    anchors = set(location_key(_base_station_query(query)).split())
+    if not anchors:
+        return True
+    offered = set(location_key(item["name"]).split()) | set(location_key(item.get("region")).split())
+    return anchors <= offered
+
+
+def nearby_modal_options(result: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """At most one co-located bus/rail pair, never a choice between distant places."""
+    if result.get("transport_mode", "all") != "all":
+        return []
+    rows = result.get("stations") or []
+    query = location_key(result.get("query"))
+    explicit = bool(result.get("auto_selection")) or bool(rows and sorted(query.split()) == sorted(location_key(rows[0]["name"]).split()))
+    if not explicit or any(query == location_key(row.get("region")) for row in rows if row.get("region")):
+        return []
+    buses = [row for row in rows if _station_mode_match(row, "bus") is True and _station_mode_match(row, "local_train") is not True]
+    trains = [row for row in rows if _station_mode_match(row, "local_train") is True]
+    for bus in buses:
+        for train in trains:
+            distance = _distance_km(bus, train)
+            if distance is not None and distance <= 0.3 and bus.get("provider_id") != train.get("provider_id"):
+                return [("bus", bus), ("local_train", train)]
+    return []
+
+
 def _same_group(group: dict[str, Any], item: dict[str, Any], transport_mode: GroundTransportMode = "all") -> bool:
     if transport_mode != "all":
         left, right = _station_mode_match(group, transport_mode), _station_mode_match(item, transport_mode)
@@ -215,6 +242,8 @@ async def _search_uncached(normalized: str, limit: int, transport_mode: GroundTr
     groups: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for item in sorted(candidates, key=lambda entry: (-_score(normalized, entry["name"], entry["provider"], entry), entry["name"])):
+        if not _query_matches_station(normalized, item):
+            continue
         if not has_airport_context(normalized) and has_airport_context(item["name"]):
             continue
         if (
@@ -269,8 +298,10 @@ async def _search_uncached(normalized: str, limit: int, transport_mode: GroundTr
     if transport_mode != "all" and ranked:
         exact_matches = [item for item in ranked if sorted(location_key(item["name"]).split()) == sorted(location_key(normalized).split())]
         explicit_station = explicit_station or (len(exact_matches) == 1 and exact_matches[0] is ranked[0])
-    auto = ranked[0] if ranked and explicit_station else None
+    auto = ranked[0] if ranked and explicit_station and location_key(_base_station_query(normalized)) else None
     return {
+        "status": ("failed" if not ranked and statuses and all(value == "failed" for value in statuses.values())
+                   else "partial" if any(value == "failed" for value in statuses.values()) else "ok"),
         "query": normalized, "stations": ranked, "provider_status": statuses,
         "requires_selection": bool(ranked and not auto),
         "auto_selection": auto,

@@ -23,9 +23,8 @@ from .coverage import analyze_route
 from .models import DepartureRequest, PriceCalendarRequest, StationSelection, TripRequest
 from .ground_transport import GroundTransportMode
 from .db import db_departures
-from .location_resolver import location_key
 from .service import price_calendar, search
-from .station_catalog import search_stations
+from .station_catalog import nearby_modal_options, search_stations
 from .warnings import warnings_for_routes
 
 INSTRUCTIONS = (
@@ -43,6 +42,8 @@ INSTRUCTIONS = (
     " next_departures liefert die nächsten Abfahrten ohne Ziel in beiden Richtungen; destination ist ein optionaler "
     "Fahrtverlaufsfilter für beliebige Start-/Zielorte. Für Bus transport_mode='bus', für reine S-Bahn 'suburban', "
     "für Nahverkehrszüge S/RB/RE 'local_train' verwenden. Bei Deutschlandticket zusätzlich deutschlandticket_only=true setzen."
+    " Ohne Verkehrsmittelvorgabe meldet next_departures bei klar benachbarten Bus-/Bahnhalten beide getrennt. "
+    "Bei needs_selection nicht raten, sondern die Haltestelle klären."
 )
 
 REF_TTL_SECONDS = 3600
@@ -249,8 +250,6 @@ async def search_ground(
             if field["field"] == "departure_date":
                 field["field"] = "date"
         return _search_input_error(fields, now)
-    if request.origin.casefold() == request.destination.casefold():
-        return _search_input_error([{"field": "request", "message": "Start und Ziel müssen verschieden sein"}], now)
     result = await search(request)
     connections = _find_connections(result)
     key = {"cheapest": lambda c: (c.get("price") is None, c.get("price") or 0), "fastest": lambda c: c.get("duration_minutes") or 10**6,
@@ -589,11 +588,6 @@ async def _departure_station(name: str, mode: GroundTransportMode, provided: Sta
     result = await search_stations(name, 8, transport_mode=mode)
     row = result.get("auto_selection")
     if row is None:
-        exact = [item for item in result.get("stations") or []
-                 if sorted(location_key(item.get("name")).split()) == sorted(location_key(name).split())]
-        if len(exact) == 1:
-            row = exact[0]
-    if row is None:
         return _station_search_result(result)
     return StationSelection.model_validate({k: row[k] for k in (
         "name", "provider", "provider_id", "provider_ids", "provider_alias_ids", "latitude", "longitude") if k in row})
@@ -627,6 +621,29 @@ async def next_departures(
     except ValidationError as exc:
         return _search_input_error([{"field": ".".join(map(str, e["loc"])) or "request", "message": e["msg"]}
                                    for e in exc.errors(include_url=False, include_input=False, include_context=False)], now)
+    if request.transport_mode == "all" and request.origin_station is None and request.destination is None:
+        try:
+            catalog = await search_stations(request.origin, 8)
+            choices = nearby_modal_options(catalog)
+        except Exception:
+            choices = []
+        if choices:
+            replies = await asyncio.gather(*(next_departures(
+                row["name"], transport_mode=mode, deutschlandticket_only=request.deutschlandticket_only,
+                departure_in_minutes=request.departure_in_minutes, duration_minutes=request.duration_minutes,
+                limit=request.limit, origin_station=StationSelection.model_validate({k: row[k] for k in (
+                    "name", "provider", "provider_id", "provider_ids", "provider_alias_ids", "latitude", "longitude") if k in row}),
+            ) for mode, row in choices))
+            groups = {mode: reply.structured_content or {} for (mode, _), reply in zip(choices, replies, strict=True)}
+            departures = [item for data in groups.values() for item in data.get("departures", [])]
+            departures.sort(key=lambda item: item.get("expected_departure") or "")
+            errors = sum(reply.is_error for reply in replies)
+            text = "Bus- und Bahnhalt liegen hier dicht beieinander. Ohne Verkehrsmittelvorgabe werden beide getrennt abgefragt:\n"
+            text += "\n".join(("Bus: " if mode == "bus" else "Nahverkehrszüge: ") + reply.content[0].text
+                              for (mode, _), reply in zip(choices, replies, strict=True))
+            return CallToolResult(is_error=errors == len(replies), content=[TextContent(type="text", text=text)],
+                structured_content={"status": "failed" if errors == len(replies) else ("partial" if errors else ("ok" if departures else "empty")),
+                                    "by_transport": groups, "departures": departures[:request.limit], "server_time": _clock_info(now)})
     try:
         selected = await _departure_station(request.origin, request.transport_mode, request.origin_station)
         if isinstance(selected, CallToolResult):

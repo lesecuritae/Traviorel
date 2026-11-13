@@ -29,6 +29,13 @@ def test_walking_is_not_a_conflicting_transport_and_unknown_rides_fail_closed():
     assert not route_matches_transport({"legs": [{"line": "S1", "mode": "train"}]}, "suburban")
 
 
+@pytest.mark.parametrize("spoken,canonical", [("S-Bahn", "suburban"), ("sbahn", "suburban"),
+    ("Bus", "bus"), ("RE", "local_train"), ("RB", "local_train"), ("Zug", "local_train")])
+def test_transport_aliases_are_shared_by_api_models(spoken, canonical):
+    req = models.ReiseRequest(origin="Start", destination="Ziel", travel_date="2030-09-15", transport_mode=spoken)
+    assert req.transport_mode == canonical
+
+
 @pytest.mark.parametrize("mode", ["all", "bus", "suburban", "local_train"])
 def test_same_selection_is_used_by_api_models_and_comparison(mode):
     req = models.ReiseRequest(origin="Start", destination="Ziel", travel_date="2030-09-15", transport_mode=mode)

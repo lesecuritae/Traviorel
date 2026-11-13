@@ -411,6 +411,8 @@ class TripRequest(BaseModel):
     @model_validator(mode="after")
     def validate_trip(self):
         apply_transport_selection(self)
+        if self.travel_mode == "ground" and self.origin.casefold() == self.destination.casefold():
+            raise ValueError("Start und Ziel müssen verschieden sein")
         if self.travel_mode == "ground" and not self.include_train and not self.include_bus:
             raise ValueError("Mindestens Zug oder Bus muss ausgewählt sein")
         if self.travel_mode == "ground" and bool(self.origin_station) != bool(self.destination_station):

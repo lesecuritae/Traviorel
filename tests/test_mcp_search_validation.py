@@ -129,3 +129,10 @@ def test_station_discovery_supplies_reusable_selection(monkeypatch):
     assert row["selection"]["provider_id"] == "8013070"
     assert row["ids"] == {"db": "8013070"}
     assert result.structured_content["requires_selection"] is True
+
+
+def test_identical_ground_endpoints_are_rejected_in_the_shared_api_model():
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError, match="verschieden"):
+        models.TripRequest(origin="Start", destination="start", departure_date="2030-09-15",
+                           travel_mode="ground", journey_type="one_way")
