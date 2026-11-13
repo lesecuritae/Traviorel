@@ -39,7 +39,7 @@ INSTRUCTIONS = (
     "der Server berechnet Datum und Uhrzeit. Bei unsicheren Haltestellen find_station nutzen und deren "
     "selection unverändert als origin_station/destination_station mit dem gefundenen Namen übernehmen. "
     "Benachbarte Bahnhöfe, Straßenbahn- und Bushaltestellen nicht durch ähnlich klingende Namen ersetzen."
-    " next_departures liefert die nächsten Abfahrten ohne Ziel in beiden Richtungen; destination ist ein optionaler "
+    " next_departures liefert die nächsten Abfahrten ohne Ziel in allen Richtungen; destination ist ein optionaler "
     "Fahrtverlaufsfilter für beliebige Start-/Zielorte. Für Bus transport_mode='bus', für reine S-Bahn 'suburban', "
     "für Nahverkehrszüge S/RB/RE 'local_train' verwenden. Bei Deutschlandticket zusätzlich deutschlandticket_only=true setzen."
     " Ohne Verkehrsmittelvorgabe meldet next_departures bei klar benachbarten Bus-/Bahnhalten beide getrennt. "
@@ -600,7 +600,7 @@ async def next_departures(
     departure_in_minutes: int = 0, duration_minutes: int = 90, limit: int = 8,
     origin_station: StationSelection | None = None, destination_station: StationSelection | None = None,
 ) -> CallToolResult:
-    """Nächste Abfahrten ab beliebiger Haltestelle, ohne Ziel in beiden Richtungen.
+    """Nächste Abfahrten ab beliebiger Haltestelle, ohne Ziel in allen Richtungen.
 
     Args:
         origin: Name des Bahnhofs oder der Haltestelle, mit Ort zur eindeutigen Zuordnung.
@@ -675,14 +675,18 @@ async def next_departures(
                               structured_content={"error": {"code": "SOURCE_UNAVAILABLE"}, "attempts": result.get("attempts")})
     rows = result["departures"]
     lines = [f"Abfahrten ab {selected.name}, ab {when.isoformat(timespec='minutes')} ({TZ})"
-             + (f" Richtung/über {target.name}:" if target else " – beide Richtungen:")]
-    lines.extend(f"- {row.get('line') or 'Linie unbekannt'} → {row.get('direction') or 'Richtung unbekannt'}: "
+             + (f" Richtung/über {target.name}:" if target else " – alle Richtungen:")]
+    labels = {"bus": "Bus", "suburban": "S-Bahn", "regional": "Regionalzug", "regionalExpress": "Regionalexpress", "tram": "Straßenbahn"}
+    lines.extend(f"- {row.get('line') or 'Linie unbekannt'} ({labels.get(row.get('product'), 'Verkehrsmittel nicht eingeordnet')}) "
+                 f"ab {row.get('station') or selected.name} → {row.get('direction') or 'Richtung unbekannt'}: "
                  f"Plan {_hm(row.get('planned_departure'))}, erwartet {_hm(row.get('expected_departure'))}"
                  + (f", Gleis/Steig {row['platform']}" if row.get('platform') else "") for row in rows)
     if not rows:
         lines.append("Keine passenden Abfahrten im abgefragten Zeitraum gemeldet.")
     if result.get("cancelled_departures"):
         lines.append(f"{len(result['cancelled_departures'])} gemeldete Ausfälle sind separat in cancelled_departures enthalten.")
+    if result.get("related_departures"):
+        lines.append("Weitere Abfahrten an anderen Haltestellen wurden getrennt in related_departures abgelegt; sie gelten nicht als Abfahrten am gewählten Halt.")
     return _text("\n".join(lines), {**result, "server_time": _clock_info(now), "requested_from": when.isoformat()})
 
 

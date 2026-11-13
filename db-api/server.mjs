@@ -945,6 +945,9 @@ function normalizeDeparture(item, station) {
   const planned = isoValue(item.plannedWhen || item.when);
   const expected = isoValue(item.when || item.plannedWhen);
   if (!planned || !expected || !item.line) return null;
+  const sameId = (value) => value != null && String(value).replace(/^0+(?=\d)/, '') === String(station.id).replace(/^0+(?=\d)/, '');
+  const stationVerified = sameId(item.stop?.id) || sameId(item.stop?.station?.id)
+    || sameId(item.stop?.parent?.id) || sameId(item.stop?.parentStation?.id ?? item.stop?.parentStation);
   return {
     trip_id: item.tripId || null, station_id: item.stop?.id || station.id,
     station: item.stop?.name || station.name, line: item.line.name || null,
@@ -953,6 +956,7 @@ function normalizeDeparture(item, station) {
     delay_minutes: delayMinutes(item.delay, item.when, item.plannedWhen),
     platform: item.platform || null, planned_platform: item.plannedPlatform || null,
     cancelled: Boolean(item.cancelled),
+    station_match_verified: stationVerified,
   };
 }
 
@@ -996,7 +1000,8 @@ async function departuresWithProfile(profileName, body) {
   const end = when.getTime() + duration * 60000;
   const seen = new Set();
   const items = raw.filter((item) => journeyMatchesTransport({legs: [{line: item.line}]}, transportMode))
-    .filter((item) => !body.deutschlandticket_only || isDeutschlandticketJourney({legs: [{line: item.line}]}))
+    .filter((item) => !body.deutschlandticket_only || (deutschlandticketProducts[item.line?.product] === true
+      && isDeutschlandticketJourney({legs: [{line: item.line}]})))
     .map((item) => normalizeDeparture(item, station)).filter(Boolean)
     .filter((item) => new Date(item.expected_departure).getTime() >= when.getTime() && new Date(item.expected_departure).getTime() <= end)
     .filter((item) => {
@@ -1005,10 +1010,11 @@ async function departuresWithProfile(profileName, body) {
       seen.add(key); return true;
     }).sort((a, b) => new Date(a.expected_departure) - new Date(b.expected_departure));
   return {
-    status: items.some((item) => !item.cancelled) ? 'ok' : 'empty', source: profileName,
+    status: items.some((item) => item.station_match_verified && !item.cancelled) ? 'ok' : 'empty', source: profileName,
     station, destination: body.destination || null, when: when.toISOString(), transport_mode: transportMode,
-    departures: items.filter((item) => !item.cancelled).slice(0, limit),
-    cancelled_departures: items.filter((item) => item.cancelled).slice(0, limit),
+    departures: items.filter((item) => item.station_match_verified && !item.cancelled).slice(0, limit),
+    cancelled_departures: items.filter((item) => item.station_match_verified && item.cancelled).slice(0, limit),
+    related_departures: items.filter((item) => !item.station_match_verified).slice(0, limit),
     ticket_coverage: body.deutschlandticket_only ? 'local_transport_types_only_tariff_not_verified' : 'not_checked',
   };
 }
@@ -1746,7 +1752,7 @@ async function runSelfTests() {
       boardCalls += 1;
       if (opt.when.toISOString() !== new Date(boardWhen).toISOString()) throw new Error('board time lost');
       if (opt.products.nationalExpress) throw new Error('local board enabled ICE');
-      return {departures: [...boardRows, boardRows[0]]};
+      return {departures: [...boardRows, boardRows[0], {...boardRows[3], tripId: 'foreign-stop', stop: {id: 'other', name: 'Other station'}}]};
     }};
     for (const [transportMode, count] of [['suburban', 2], ['bus', 1], ['local_train', 3]]) {
       const result = await departuresWithProfile('dbnav', {
@@ -1760,7 +1766,11 @@ async function runSelfTests() {
         throw new Error('board lost a direction');
       }
       if (result.departures[0].delay_minutes !== 1) throw new Error('board delay units lost');
+      if (result.departures.some((item) => !item.station_match_verified)) throw new Error('related stop leaked into requested board');
+      if (transportMode === 'bus' && result.related_departures.length !== 1) throw new Error('related board evidence lost');
     }
+    const parentBoard = normalizeDeparture({...boardRows[0], stop: {id: 'child', station: {id: 'start'}}}, {id: 'start', name: 'Start'});
+    if (!parentBoard.station_match_verified) throw new Error('explicit parent station relation lost');
     const products = transportProducts('local_train', 'all');
     if (!products.suburban || !products.regional || !products.regionalExpress || products.bus || products.tram || products.national) {
       throw new Error('local-train product selection failed');
@@ -1832,11 +1842,8 @@ const server = http.createServer(async (req, res) => {
           latitude: item.location?.latitude ?? null, longitude: item.location?.longitude ?? null,
           is_station: item.type === 'station',
           products: item.products || {},
-          modes: Object.entries(item.products || {}).filter(([, enabled]) => enabled === true).map(([product]) => ({
-            suburban: 'SUBURBAN', subway: 'SUBWAY', tram: 'TRAM', bus: 'BUS', ferry: 'FERRY',
-            nationalExpress: 'HIGHSPEED_RAIL', national: 'LONG_DISTANCE', regional: 'REGIONAL_RAIL',
-            regionalExpress: 'REGIONAL_RAIL', taxi: 'TAXI',
-          }[product] || product.toUpperCase())),
+          // DB products include nearby/related stops. They are not evidence of
+          // the transport mode at this exact stop; retain them separately.
         }));
       }));
       const seen = new Set();
