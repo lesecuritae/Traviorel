@@ -8,7 +8,7 @@
 
 Rail, the Deutschlandticket, split tickets, FlixTrain, FlixBus, flights, airport feeders, transfers, and accommodation are combined into a single itinerary. Traviorel does not merely look for a low price somewhere. Every part of the journey must fit together both chronologically and logically.
 
-Current version: **0.3.3**
+Current version: **0.3.4**
 
 Traviorel does not sell or book anything itself. If a provider supplies a usable offer link, it can be opened directly from the result. Where no direct link is available, Traviorel offers a suitable manual cross-check, for example with Deutsche Bahn, Google Flights, Google Hotels, or Google Maps. Price and availability must always be verified with the actual provider.
 
@@ -340,7 +340,7 @@ docker compose build
 docker compose up -d
 ```
 
-trvl is pinned through `TRVL_REF` and `TRVL_COMMIT`; Traviorel uses `v1.27.0` (commit `4f6b5da`) by default. The build fails if the tag no longer resolves to that commit, so bump both together after reviewing the new upstream commit.
+trvl is pinned through `TRVL_REF` and `TRVL_COMMIT` to reviewed upstream commit `b20e2265a63a4d229abff7b20f5649f2e9f948dc`. This is an unreleased snapshot after v1.27.0, identified as `1.27.0+git.b20e226` through `TRVL_VERSION`. Change the reference, expected commit and version together after review. A mismatched commit fails the build. The Go 1.27.3 builder is digest-pinned; selected upstream tests run without network access during the full build. The Lite image still excludes trvl.
 
 ## Unambiguous station selection
 

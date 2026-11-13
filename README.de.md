@@ -8,7 +8,7 @@
 
 Bahn, Deutschlandticket, Split-Tickets, FlixTrain, FlixBus, Flüge, Flughafenzubringer, Transfers und Unterkünfte landen in einer gemeinsamen Planung. Traviorel schaut dabei nicht nur, ob irgendwo ein günstiger Preis auftaucht. Die einzelnen Teile müssen zeitlich und logisch zusammenpassen.
 
-Aktuelle Version: **0.3.3**
+Aktuelle Version: **0.3.4**
 
 Traviorel verkauft und bucht selbst nichts. Wenn ein Provider einen brauchbaren Angebotslink liefert, kann er direkt aus dem Ergebnis geöffnet werden. Wo kein direkter Link vorhanden ist, gibt es an passenden Stellen einen manuellen Gegencheck, etwa bei der Deutschen Bahn, Google Flights, Google Hotels oder Google Maps. Preis und Verfügbarkeit werden beim eigentlichen Anbieter noch einmal geprüft.
 
@@ -364,7 +364,7 @@ docker compose build
 docker compose up -d
 ```
 
-trvl ist über `TRVL_REF` und `TRVL_COMMIT` gepinnt; Traviorel verwendet standardmäßig `v1.27.0` (Commit `4f6b5da`). Zeigt der Tag nicht mehr auf diesen Commit, bricht der Build ab; beide Werte daher nur gemeinsam und nach Prüfung des neuen Upstream-Commits anheben.
+trvl ist über `TRVL_REF` und `TRVL_COMMIT` auf den geprüften Upstream-Commit `b20e2265a63a4d229abff7b20f5649f2e9f948dc` gepinnt. Das ist ein noch unveröffentlichter Stand nach v1.27.0; die Binary-Version lautet deshalb `1.27.0+git.b20e226`. `TRVL_VERSION` setzt diese Kennzeichnung. Referenz, Commit und Versionskennung nur gemeinsam nach Prüfung ändern. Der Build verweigert einen abweichenden Commit und verwendet das per Digest festgelegte Go 1.27.3. Die ausgewählten Upstream-Tests laufen beim vollständigen Build ohne Netzwerk; das Lite-Image enthält weiterhin kein trvl.
 
 ## Eindeutige Stationsauswahl
 
