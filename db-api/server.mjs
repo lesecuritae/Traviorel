@@ -599,6 +599,7 @@ function bestMoney(journey) {
 }
 
 function dateValue(value) {
+  if (value == null || value === '') return null;
   if (value instanceof Date) return value;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
@@ -1771,6 +1772,8 @@ async function runSelfTests() {
     }
     const parentBoard = normalizeDeparture({...boardRows[0], stop: {id: 'child', station: {id: 'start'}}}, {id: 'start', name: 'Start'});
     if (!parentBoard.station_match_verified) throw new Error('explicit parent station relation lost');
+    const cancelledBoard = normalizeDeparture({...boardRows[0], cancelled: true, when: null, delay: null}, {id: 'start', name: 'Start'});
+    if (cancelledBoard.delay_minutes !== null) throw new Error('missing actual time fabricated a delay');
     const products = transportProducts('local_train', 'all');
     if (!products.suburban || !products.regional || !products.regionalExpress || products.bus || products.tram || products.national) {
       throw new Error('local-train product selection failed');

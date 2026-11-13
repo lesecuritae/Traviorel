@@ -72,3 +72,26 @@ def test_source_outage_is_failed_and_must_not_be_cached_as_no_stations(monkeypat
     assert result["stations"] == []
     assert result["status"] == "failed"
     assert set(result["provider_status"].values()) == {"failed"}
+
+
+def test_nearby_cross_provider_stops_require_matching_names_not_only_distance(monkeypatch):
+    async def db(query):
+        return [
+            {"provider": "db", "provider_id": "rail", "name": "Musterstadt West", "latitude": 51.0, "longitude": 12.0},
+            {"provider": "db", "provider_id": "bus", "name": "S-Bahnhof West, Musterstadt", "latitude": 51.0001, "longitude": 12.0},
+            {"provider": "db", "provider_id": "street", "name": "West Beispielstr., Musterstadt", "latitude": 51.0002, "longitude": 12.0},
+        ]
+    async def transitous(query):
+        return [
+            {"provider": "transitous", "provider_id": "t-rail", "name": "Musterstadt-West, Bahnhof", "modes": ["SUBURBAN"], "latitude": 51.0, "longitude": 12.0},
+            {"provider": "transitous", "provider_id": "t-bus", "name": "Musterstadt, S-Bahnhof West", "modes": ["BUS"], "latitude": 51.0001, "longitude": 12.0},
+        ]
+    async def empty(query): return []
+    monkeypatch.setattr(station_catalog, "_db_locations", db)
+    monkeypatch.setattr(station_catalog, "_transitous_locations", transitous)
+    monkeypatch.setattr(station_catalog, "_flix_locations", empty)
+    result = asyncio.run(station_catalog._search_uncached("West Bahnhof Musterstadt", 8))
+    pairs = {item["provider_ids"].get("transitous"): item["provider_ids"].get("db") for item in result["stations"]}
+    assert pairs["t-rail"] == "rail"
+    assert pairs["t-bus"] == "bus"
+    assert any(item["provider_ids"] == {"db": "street"} for item in result["stations"])

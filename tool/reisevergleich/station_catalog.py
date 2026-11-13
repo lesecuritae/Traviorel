@@ -14,7 +14,7 @@ from .location_resolver import exact_location_key, has_airport_context, location
 from .ground_transport import GroundTransportMode
 
 _CACHE_TTL = 300
-_RANKING_GENERATION = "stations-v11"
+_RANKING_GENERATION = "stations-v12"
 
 
 def _base_station_query(value: str) -> str:
@@ -190,11 +190,18 @@ def nearby_modal_options(result: dict[str, Any]) -> list[tuple[str, dict[str, An
     return []
 
 
+def _station_identity(name: str) -> tuple[str, ...]:
+    """Conservative spelling/word-order aliases, preserving stop qualifiers."""
+    value = location_key(name)
+    value = re.sub(r"\bcentral (?:train station|bus stop|station)\b", "hbf", value)
+    value = re.sub(r"\b(?:hauptbahnhof|centrale|centraal)\b", "hbf", value)
+    return tuple(sorted(word for word in value.split() if word not in {"bahnhof", "station"}))
+
+
 def _same_group(group: dict[str, Any], item: dict[str, Any], transport_mode: GroundTransportMode = "all") -> bool:
-    if transport_mode != "all":
-        left, right = _station_mode_match(group, transport_mode), _station_mode_match(item, transport_mode)
-        if left is not None and right is not None and left != right:
-            return False
+    left_modes, right_modes = set(group.get("modes") or []), set(item.get("modes") or [])
+    if left_modes and right_modes and not left_modes & right_modes:
+        return False
     distance = _distance_km(group, item)
     if distance is None:
         return exact_location_key(group["name"]) == exact_location_key(item["name"])
@@ -207,7 +214,10 @@ def _same_group(group: dict[str, Any], item: dict[str, Any], transport_mode: Gro
         # platforms only when that provider explicitly supplies a shared parent.
         parent = item.get("parent_station")
         return bool(parent and parent == group.get("provider_parent_stations", {}).get(provider))
-    return True
+    # Proximity alone is not identity: a bus stop, station and nearby street
+    # can all be within the radius. Never attach another provider's ID merely
+    # because it was encountered first in the sorted catalog.
+    return _station_identity(group["name"]) == _station_identity(item["name"])
 
 
 async def _search_uncached(normalized: str, limit: int, transport_mode: GroundTransportMode = "all") -> dict[str, Any]:
