@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .config import TZ, today_iso
+from .ground_transport import GroundTransportMode, apply_transport_selection
 
 # Free-text place names. Station search already caps its query at 120; the search models
 # had no bound, and stop scoring cost grew with the query length for every stop row.
@@ -86,6 +87,7 @@ def _future_or_today(value: str | None, field_name: str) -> str | None:
 
 
 class ReiseRequest(BaseModel):
+    transport_mode: GroundTransportMode = "all"
     origin: str = Field(max_length=PLACE_MAX_LENGTH, description="Startort oder Bahnhof")
     destination: str = Field(max_length=PLACE_MAX_LENGTH, description="Zielort oder Bahnhof")
     travel_date: str = Field(description="Reisedatum YYYY-MM-DD; kein Datum in der Vergangenheit verwenden")
@@ -138,6 +140,7 @@ class ReiseRequest(BaseModel):
 
     @model_validator(mode="after")
     def different_stations(self):
+        apply_transport_selection(self)
         if not self.include_train and not self.include_bus:
             raise ValueError("Mindestens Zug oder Bus muss ausgewählt sein")
         if self.origin.casefold() == self.destination.casefold():
@@ -149,7 +152,29 @@ class ReiseRequest(BaseModel):
         return self
 
 
+class DepartureRequest(BaseModel):
+    origin: str = Field(min_length=1, max_length=PLACE_MAX_LENGTH)
+    destination: str | None = Field(default=None, min_length=1, max_length=PLACE_MAX_LENGTH)
+    transport_mode: GroundTransportMode = "all"
+    deutschlandticket_only: bool = False
+    departure_in_minutes: int = Field(default=0, ge=0, le=10080, strict=True)
+    duration_minutes: int = Field(default=90, ge=1, le=360, strict=True)
+    limit: int = Field(default=8, ge=1, le=20, strict=True)
+    origin_station: StationSelection | None = None
+    destination_station: StationSelection | None = None
+
+    @model_validator(mode="after")
+    def selected_names_match(self):
+        for name, selection in ((self.origin, self.origin_station), (self.destination, self.destination_station)):
+            if selection and (not name or name.strip().casefold() != selection.name.casefold()):
+                raise ValueError("Name und ausgewählte Haltestelle müssen übereinstimmen")
+        if self.destination and self.origin.strip().casefold() == self.destination.strip().casefold():
+            raise ValueError("Start und Ziel müssen verschieden sein; für eine Abfahrtstafel destination weglassen")
+        return self
+
+
 class DeutschlandticketRequest(BaseModel):
+    transport_mode: GroundTransportMode = "all"
     origin: str = Field(max_length=PLACE_MAX_LENGTH)
     destination: str = Field(max_length=PLACE_MAX_LENGTH)
     travel_date: str
@@ -252,6 +277,7 @@ class HotelRequest(BaseModel):
 
 
 class TripRequest(BaseModel):
+    transport_mode: GroundTransportMode = "all"
     """Strukturierte Eingabe für eine komplette Reise."""
 
     travel_mode: Literal["flight", "ground"] = "flight"
@@ -384,6 +410,7 @@ class TripRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_trip(self):
+        apply_transport_selection(self)
         if self.travel_mode == "ground" and not self.include_train and not self.include_bus:
             raise ValueError("Mindestens Zug oder Bus muss ausgewählt sein")
         if self.travel_mode == "ground" and bool(self.origin_station) != bool(self.destination_station):

@@ -219,6 +219,25 @@ const deutschlandticketProducts = {
   taxi: false,
 };
 
+function groundTransportMode(body) {
+  const mode = body.transport_mode ?? 'all';
+  if (!['all', 'suburban', 'bus', 'local_train'].includes(mode)) throw new HttpError(400, 'invalid transport_mode');
+  return mode;
+}
+
+function transportProducts(transportMode, fareMode) {
+  if (transportMode === 'all') return fareMode === 'deutschlandticket' ? deutschlandticketProducts : allProducts;
+  const selected = transportMode === 'local_train' ? ['suburban', 'regional', 'regionalExpress'] : [transportMode];
+  return Object.fromEntries(Object.keys(allProducts).map((key) => [key, selected.includes(key)]));
+}
+
+function journeyMatchesTransport(journey, transportMode) {
+  if (transportMode === 'all') return true;
+  const rides = (journey.legs || []).filter((leg) => !leg.walking);
+  const selected = transportMode === 'local_train' ? ['suburban', 'regional', 'regionalExpress'] : [transportMode];
+  return rides.length > 0 && rides.every((leg) => selected.includes(leg.line?.product));
+}
+
 class HttpError extends Error {
   constructor(status, message, details = undefined) {
     super(message);
@@ -648,6 +667,7 @@ function normalizeLeg(leg) {
     trip_id: leg?.tripId ? String(leg.tripId) : null,
     line: leg?.line?.name || leg?.line?.productName || null,
     line_name: leg?.line?.name || leg?.line?.productName || null,
+    direction: leg?.direction || null,
     train_number: leg?.line?.fahrtNr != null ? String(leg.line.fahrtNr) : null,
     train_type: leg?.line?.productName || leg?.line?.product || null,
     product: leg?.line?.product || null,
@@ -790,6 +810,7 @@ async function mapWithConcurrency(items, concurrency, worker) {
 }
 
 async function searchWithProfile(profileName, body) {
+  const transportMode = groundTransportMode(body);
   const client = clients[profileName];
   if (!client) throw new Error(`unknown DB profile: ${profileName}`);
   const [origin, destination] = await Promise.all([
@@ -809,8 +830,8 @@ async function searchWithProfile(profileName, body) {
     results: maxResults,
     stopovers: true,
     remarks: true,
-    products: mode === 'deutschlandticket' ? deutschlandticketProducts : allProducts,
-    notOnlyFastRoutes: mode === 'deutschlandticket' || body.not_only_fast_routes === true,
+    products: transportProducts(transportMode, mode),
+    notOnlyFastRoutes: transportMode !== 'all' || mode === 'deutschlandticket' || body.not_only_fast_routes === true,
     language: 'de',
   };
   if (arrival) options.arrival = arrival;
@@ -826,6 +847,7 @@ async function searchWithProfile(profileName, body) {
     `${profileName} journey search`,
   );
   let journeys = Array.isArray(response?.journeys) ? response.journeys : [];
+  journeys = journeys.filter((journey) => journeyMatchesTransport(journey, transportMode));
   if (mode === 'deutschlandticket') journeys = journeys.filter(isDeutschlandticketJourney);
 
   const refreshLimit = mode === 'all' && body.with_prices !== false ? Math.min(journeys.length, 4) : 0;
@@ -836,6 +858,7 @@ async function searchWithProfile(profileName, body) {
   journeys = [...refreshedHead, ...journeys.slice(refreshLimit)];
 
   const normalized = journeys
+    .filter((journey) => journeyMatchesTransport(journey, transportMode))
     .map((journey, index) => normalizeJourney(journey, origin, destination, mode, index, profileName))
     .filter(Boolean)
     .filter((journey) => !arrivalBefore || (journey.arrival && new Date(journey.arrival) <= arrivalBefore))
@@ -859,11 +882,13 @@ async function searchWithProfile(profileName, body) {
       not_only_fast_routes: options.notOnlyFastRoutes === true,
       time_mode: arrival ? 'arrival' : 'departure',
       arrival_before: arrivalBefore ? arrivalBefore.toISOString() : null,
+      transport_mode: transportMode,
     },
   };
 }
 
 async function searchJourneys(body) {
+  groundTransportMode(body);
   const attempts = [];
   let scheduleFallback = null;
   const wantsPrices = body.mode !== 'deutschlandticket' && body.with_prices !== false;
@@ -914,6 +939,98 @@ async function searchJourneys(body) {
     journeys: [],
     attempts,
   };
+}
+
+function normalizeDeparture(item, station) {
+  const planned = isoValue(item.plannedWhen || item.when);
+  const expected = isoValue(item.when || item.plannedWhen);
+  if (!planned || !expected || !item.line) return null;
+  return {
+    trip_id: item.tripId || null, station_id: item.stop?.id || station.id,
+    station: item.stop?.name || station.name, line: item.line.name || null,
+    product: item.line.product || null, operator: item.line.operator?.name || null,
+    direction: item.direction || null, planned_departure: planned, expected_departure: expected,
+    delay_minutes: delayMinutes(item.delay, item.when, item.plannedWhen),
+    platform: item.platform || null, planned_platform: item.plannedPlatform || null,
+    cancelled: Boolean(item.cancelled),
+  };
+}
+
+async function departuresWithProfile(profileName, body) {
+  const transportMode = groundTransportMode(body);
+  const client = clients[profileName];
+  const when = new Date(body.when || Date.now());
+  if (Number.isNaN(when.getTime())) throw new HttpError(400, 'invalid departure time');
+  const duration = body.duration_minutes ?? 90;
+  const limit = body.limit ?? 8;
+  if (!Number.isInteger(duration) || duration < 1 || duration > 360 || !Number.isInteger(limit) || limit < 1 || limit > 20) {
+    throw new HttpError(400, 'duration_minutes must be 1..360 and limit 1..20');
+  }
+  if (typeof body.station !== 'string' || !body.station.trim() || body.station.length > 120) throw new HttpError(400, 'station is required, max 120 characters');
+  if (body.destination != null && (typeof body.destination !== 'string' || !body.destination.trim() || body.destination.length > 120)) throw new HttpError(400, 'invalid destination');
+  const station = await resolveLocation(client, body.station, profileName, body.station_id);
+  let raw;
+  if (body.destination) {
+    // A destination is a real journey constraint, not a guessed train headsign.
+    const journeys = await searchWithProfile(profileName, {
+      origin: body.station, origin_id: body.station_id,
+      destination: body.destination, destination_id: body.destination_id,
+      departure: when.toISOString(), results: Math.min(limit * 2, 40), with_prices: false,
+      mode: body.deutschlandticket_only ? 'deutschlandticket' : 'all', transport_mode: transportMode,
+    });
+    raw = journeys.journeys.map((journey) => journey.legs[0]).filter(Boolean).map((leg) => ({
+      tripId: leg.trip_id, stop: leg.origin, line: {name: leg.line, product: leg.product},
+      plannedWhen: leg.departure,
+      when: new Date(new Date(leg.departure).getTime() + (leg.departure_delay_minutes || 0) * 60000).toISOString(),
+      direction: leg.direction || leg.destination?.name, delay: leg.departure_delay_minutes == null ? null : leg.departure_delay_minutes * 60,
+      platform: leg.platform, plannedPlatform: leg.planned_platform, cancelled: leg.cancelled,
+    }));
+  } else {
+    const response = await withTimeout(client.departures(station.id, {
+      when, duration, results: Math.min(limit * 3, 60), remarks: true,
+      products: transportProducts(transportMode, body.deutschlandticket_only ? 'deutschlandticket' : 'all'),
+    }), REQUEST_TIMEOUT_MS, `${profileName} departures`);
+    if (!Array.isArray(response?.departures)) throw new Error('invalid departure response schema');
+    raw = response.departures;
+  }
+  const end = when.getTime() + duration * 60000;
+  const seen = new Set();
+  const items = raw.filter((item) => journeyMatchesTransport({legs: [{line: item.line}]}, transportMode))
+    .filter((item) => !body.deutschlandticket_only || isDeutschlandticketJourney({legs: [{line: item.line}]}))
+    .map((item) => normalizeDeparture(item, station)).filter(Boolean)
+    .filter((item) => new Date(item.expected_departure).getTime() >= when.getTime() && new Date(item.expected_departure).getTime() <= end)
+    .filter((item) => {
+      const key = JSON.stringify([item.trip_id, item.line, item.station_id, item.planned_departure, item.direction]);
+      if (seen.has(key)) return false;
+      seen.add(key); return true;
+    }).sort((a, b) => new Date(a.expected_departure) - new Date(b.expected_departure));
+  return {
+    status: items.some((item) => !item.cancelled) ? 'ok' : 'empty', source: profileName,
+    station, destination: body.destination || null, when: when.toISOString(), transport_mode: transportMode,
+    departures: items.filter((item) => !item.cancelled).slice(0, limit),
+    cancelled_departures: items.filter((item) => item.cancelled).slice(0, limit),
+    ticket_coverage: body.deutschlandticket_only ? 'local_transport_types_only_tariff_not_verified' : 'not_checked',
+  };
+}
+
+async function searchDepartures(body) {
+  groundTransportMode(body);
+  const attempts = [];
+  let empty = null;
+  for (const profileName of PROFILE_ORDER) {
+    try {
+      const result = profileName === 'dbnav'
+        ? await withDbnavSlot(() => departuresWithProfile(profileName, body))
+        : await departuresWithProfile(profileName, body);
+      attempts.push({profile: profileName, ok: true, departures: result.departures.length});
+      if (result.departures.length) return {...result, attempts};
+      empty ??= result;
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      attempts.push({profile: profileName, ok: false, code: error?.code || 'UPSTREAM_ERROR'});
+    }
+  }
+  return empty ? {...empty, attempts} : {status: 'failed', departures: [], attempts};
 }
 
 function stationMatches(left, right) {
@@ -1612,6 +1729,57 @@ async function runSelfTests() {
     if (gatePeak > DBNAV_MAX_CONCURRENCY || dbnavActive !== 0 || dbnavWaiters.length !== 0) {
       throw new Error(`self-test dbnav slot hand-off failed: peak=${gatePeak} active=${dbnavActive} waiting=${dbnavWaiters.length}`);
     }
+    // Explicit transport intent and departure boards use the same product filters.
+    const boardWhen = '2030-08-15T06:00:00+02:00';
+    const boardRows = [
+      ['S1', 'suburban', 'East', false], ['S1', 'suburban', 'West', false],
+      ['RE 7', 'regionalExpress', 'East', false], ['Bus 72', 'bus', 'Central', false],
+      ['ICE 10', 'nationalExpress', 'Central', false], ['S2', 'suburban', 'East', true],
+    ].map(([name, product, direction, cancelled], index) => ({
+      tripId: `board-${index}`, stop: {id: 'start', name: 'Start'},
+      line: {name, product}, direction, cancelled,
+      plannedWhen: `2030-08-15T06:${String(10 + index).padStart(2, '0')}:00+02:00`,
+      when: `2030-08-15T06:${String(11 + index).padStart(2, '0')}:00+02:00`, delay: 60,
+    }));
+    let boardCalls = 0;
+    clients.dbnav = {...makeClient('dbnav'), departures: async (_id, opt) => {
+      boardCalls += 1;
+      if (opt.when.toISOString() !== new Date(boardWhen).toISOString()) throw new Error('board time lost');
+      if (opt.products.nationalExpress) throw new Error('local board enabled ICE');
+      return {departures: [...boardRows, boardRows[0]]};
+    }};
+    for (const [transportMode, count] of [['suburban', 2], ['bus', 1], ['local_train', 3]]) {
+      const result = await departuresWithProfile('dbnav', {
+        station: 'Start', when: boardWhen, transport_mode: transportMode, deutschlandticket_only: true,
+        duration_minutes: 90, limit: 8,
+      });
+      if (result.departures.length !== count || result.departures.some((row) => row.cancelled)) {
+        throw new Error(`board transport/dedupe/cancellation filter failed: ${transportMode}`);
+      }
+      if (transportMode === 'suburban' && new Set(result.departures.map((row) => row.direction)).size !== 2) {
+        throw new Error('board lost a direction');
+      }
+      if (result.departures[0].delay_minutes !== 1) throw new Error('board delay units lost');
+    }
+    const products = transportProducts('local_train', 'all');
+    if (!products.suburban || !products.regional || !products.regionalExpress || products.bus || products.tram || products.national) {
+      throw new Error('local-train product selection failed');
+    }
+    let rejected = false;
+    try { await searchDepartures({station: 'Start', transport_mode: 'invented'}); }
+    catch (error) { rejected = error instanceof HttpError && error.status === 400; }
+    if (!rejected || boardCalls !== 3) throw new Error('invalid mode was not refused before I/O');
+    const baseJourney = (await makeClient('fixture').journeys()).journeys[0];
+    clients.dbnav = {...makeClient('dbnav'), journeys: async (_from, _to, opt) => {
+      if (!opt.products.bus || opt.products.suburban || opt.products.national) throw new Error('destination mode lost');
+      return {journeys: [{...baseJourney, legs: [{...baseJourney.legs[0], line: {name: 'Bus 72', product: 'bus'}}]}]};
+    }};
+    const directed = await departuresWithProfile('dbnav', {
+      station: 'Start', destination: 'End', when: boardWhen, duration_minutes: 90, limit: 8, transport_mode: 'bus',
+    });
+    if (directed.departures.length !== 1 || directed.destination !== 'End' || directed.departures[0].product !== 'bus') {
+      throw new Error('departure destination routing failed');
+    }
   } finally {
     clients.db = originalDb;
     clients.dbnav = originalDbnav;
@@ -1632,7 +1800,7 @@ const server = http.createServer(async (req, res) => {
         dbnav_circuit_open: dbnavCircuitOpen(),
         dbnav_active_requests: dbnavActive,
         dbnav_max_concurrency: DBNAV_MAX_CONCURRENCY,
-        capabilities: ['dbnav-first', 'db-fallback', 'prices-via-refreshJourney', 'split-ticket', 'deutschlandticket', 'arrival-search', 'bestprice', 'non-optimal-routes', 'curl-cffi-firefox-pool', 'fingerprint-session-sticky', 'dbnav-block-circuit-breaker', 'dbnav-concurrency-gate'],
+        capabilities: ['dbnav-first', 'db-fallback', 'prices-via-refreshJourney', 'split-ticket', 'deutschlandticket', 'arrival-search', 'bestprice', 'non-optimal-routes', 'curl-cffi-firefox-pool', 'fingerprint-session-sticky', 'dbnav-block-circuit-breaker', 'dbnav-concurrency-gate', 'departure-board', 'explicit-transport-mode'],
       });
     }
     if (req.method === 'POST' && req.url === '/search') {
@@ -1642,6 +1810,11 @@ const server = http.createServer(async (req, res) => {
         {sessionKey},
         () => searchJourneys(body),
       );
+      return send(res, 200, result);
+    }
+    if (req.method === 'POST' && req.url === '/departures') {
+      const body = await readJson(req);
+      const result = await cffiSessionStorage.run({sessionKey: crypto.randomUUID()}, () => searchDepartures(body));
       return send(res, 200, result);
     }
     if (req.method === 'GET' && req.url.startsWith('/locations?')) {
@@ -1658,6 +1831,12 @@ const server = http.createServer(async (req, res) => {
           provider: 'db', provider_id: String(item.id), name: item.name || String(item.id),
           latitude: item.location?.latitude ?? null, longitude: item.location?.longitude ?? null,
           is_station: item.type === 'station',
+          products: item.products || {},
+          modes: Object.entries(item.products || {}).filter(([, enabled]) => enabled === true).map(([product]) => ({
+            suburban: 'SUBURBAN', subway: 'SUBWAY', tram: 'TRAM', bus: 'BUS', ferry: 'FERRY',
+            nationalExpress: 'HIGHSPEED_RAIL', national: 'LONG_DISTANCE', regional: 'REGIONAL_RAIL',
+            regionalExpress: 'REGIONAL_RAIL', taxi: 'TAXI',
+          }[product] || product.toUpperCase())),
         }));
       }));
       const seen = new Set();
@@ -1669,7 +1848,9 @@ const server = http.createServer(async (req, res) => {
           seen.add(item.provider_id); locations.push(item);
         }
       }
-      return send(res, 200, {locations: locations.slice(0, 20)});
+      return send(res, 200, {locations: locations.slice(0, 20),
+        status: lists.some((item) => item.status === 'fulfilled') ? 'ok' : 'failed',
+        attempts: lists.map((item, index) => ({profile: PROFILE_ORDER[index], ok: item.status === 'fulfilled'}))});
     }
     if (req.method === 'POST' && req.url === '/split') {
       const body = await readJson(req);

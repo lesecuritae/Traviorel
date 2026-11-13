@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from math import asin, cos, radians, sin, sqrt
 from typing import Any
 
@@ -10,9 +11,10 @@ from .cache import cached_call
 from .config import APP_VERSION, DB_API_URL, TRANSITOUS_TIMEOUT, TRANSITOUS_URL, TRANSITOUS_USER_AGENT
 from .gtfs_flix import discover_stops
 from .location_resolver import exact_location_key, has_airport_context, location_candidates, location_key
+from .ground_transport import GroundTransportMode
 
 _CACHE_TTL = 300
-_RANKING_GENERATION = "stations-v10"
+_RANKING_GENERATION = "stations-v11"
 
 
 def _base_station_query(value: str) -> str:
@@ -66,6 +68,8 @@ def _score(query: str, name: str, provider: str, item: dict[str, Any] | None = N
     if exact_query == exact_name:
         city_only_penalty = 450 if len(exact_query.split()) == 1 else 0
         return score + 1000 - city_only_penalty + _station_role_score(name, item)
+    if sorted(exact_query.split()) == sorted(exact_name.split()):
+        return score + 950 + _station_role_score(name, item)
     if exact_location_key(_base_station_query(query)) == exact_name:
         return score + 850 + _station_role_score(name, item)
     if exact_name.startswith(exact_query + " "):
@@ -83,7 +87,10 @@ async def _db_locations(query: str) -> list[dict[str, Any]]:
     async with httpx.AsyncClient(timeout=15) as client:
         response = await client.get(f"{DB_API_URL}/locations", params={"q": query})
         response.raise_for_status()
-    return response.json().get("locations") or []
+    data = response.json()
+    if data.get("status") == "failed":
+        raise RuntimeError("DB location sources failed")
+    return data.get("locations") or []
 
 
 async def _transitous_locations(query: str) -> list[dict[str, Any]]:
@@ -123,12 +130,60 @@ async def _flix_locations(query: str) -> list[dict[str, Any]]:
 async def _all_queries(loader, queries: tuple[str, ...]) -> list[dict[str, Any]]:
     results = await asyncio.gather(*(loader(query) for query in queries), return_exceptions=True)
     output: list[dict[str, Any]] = []
+    if results and all(isinstance(result, BaseException) for result in results):
+        raise results[0]
     for result in results:
         if not isinstance(result, BaseException): output.extend(result)
     return output
 
 
-async def _search_uncached(normalized: str, limit: int) -> dict[str, Any]:
+def _city_first_queries(query: str, candidates: list[dict[str, Any]], seen: list[str]) -> list[str]:
+    """Use provider-supplied regions, not a hardcoded city/station map."""
+    known = {exact_location_key(value) for value in seen}
+    for item in candidates:
+        region = str(item.get("region") or "").strip()
+        if not region:
+            continue
+        match = re.fullmatch(r"(.+?)\s*,?\s+" + re.escape(region), query, flags=re.IGNORECASE)
+        if match:
+            flipped = region + " " + match[1].rstrip(", ")
+            if exact_location_key(flipped) not in known:
+                return [flipped]  # At most one extra lookup per provider.
+    return []
+
+
+def _station_mode_match(item: dict[str, Any], transport_mode: GroundTransportMode) -> bool | None:
+    if transport_mode == "all":
+        return True
+    modes = {str(mode).upper() for mode in item.get("modes") or []}
+    if not modes:
+        return None
+    selected = {"suburban": {"SUBURBAN"}, "bus": {"BUS", "COACH"},
+                "local_train": {"SUBURBAN", "REGIONAL_RAIL"}}[transport_mode]
+    return bool(modes & selected)
+
+
+def _same_group(group: dict[str, Any], item: dict[str, Any], transport_mode: GroundTransportMode = "all") -> bool:
+    if transport_mode != "all":
+        left, right = _station_mode_match(group, transport_mode), _station_mode_match(item, transport_mode)
+        if left is not None and right is not None and left != right:
+            return False
+    distance = _distance_km(group, item)
+    if distance is None:
+        return exact_location_key(group["name"]) == exact_location_key(item["name"])
+    if distance > 0.75:
+        return False
+    provider = item["provider"]
+    existing_id = group["provider_ids"].get(provider)
+    if existing_id and existing_id != item["provider_id"] and location_key(group["name"]) != location_key(item["name"]):
+        # A nearby tram stop is not an alias of a railway station. Keep multiple
+        # platforms only when that provider explicitly supplies a shared parent.
+        parent = item.get("parent_station")
+        return bool(parent and parent == group.get("provider_parent_stations", {}).get(provider))
+    return True
+
+
+async def _search_uncached(normalized: str, limit: int, transport_mode: GroundTransportMode = "all") -> dict[str, Any]:
     queries = list(location_candidates(normalized)[:2])
     base_query = _base_station_query(normalized)
     if base_query and exact_location_key(base_query) not in {exact_location_key(query) for query in queries}:
@@ -148,6 +203,15 @@ async def _search_uncached(normalized: str, limit: int) -> dict[str, Any]:
         statuses[provider] = "ok"
         candidates.extend(result)
 
+    extra_queries = _city_first_queries(normalized, candidates, queries)
+    if extra_queries:
+        extra = await asyncio.gather(_all_queries(_db_locations, extra_queries),
+                                     _all_queries(_transitous_locations, extra_queries), return_exceptions=True)
+        for provider, result in zip(("db", "transitous"), extra):
+            if not isinstance(result, BaseException):
+                candidates.extend(result)
+                statuses[provider] = "ok"
+
     groups: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for item in sorted(candidates, key=lambda entry: (-_score(normalized, entry["name"], entry["provider"], entry), entry["name"])):
@@ -162,16 +226,16 @@ async def _search_uncached(normalized: str, limit: int) -> dict[str, Any]:
         key = (item["provider"], item["provider_id"])
         if key in seen: continue
         seen.add(key)
-        group = next((entry for entry in groups if (
-            (_distance_km(entry, item) is not None and _distance_km(entry, item) <= 0.75)
-            or (_distance_km(entry, item) is None and exact_location_key(entry["name"]) == exact_location_key(item["name"]))
-        )), None)
+        group = next((entry for entry in groups if _same_group(entry, item, transport_mode)), None)
         if group:
             provider = item["provider"]
             group["provider_ids"].setdefault(provider, item["provider_id"])
             aliases = group.setdefault("provider_alias_ids", {}).setdefault(provider, [])
             if item["provider_id"] not in aliases:
                 aliases.append(item["provider_id"])
+            if item.get("parent_station"):
+                group.setdefault("provider_parent_stations", {}).setdefault(provider, item["parent_station"])
+            group["modes"] = sorted(set(group.get("modes") or []) | set(item.get("modes") or []))
             for field in ("region", "country", "latitude", "longitude"):
                 if group.get(field) is None and item.get(field) is not None: group[field] = item[field]
             continue
@@ -179,8 +243,13 @@ async def _search_uncached(normalized: str, limit: int) -> dict[str, Any]:
             **item,
             "provider_ids": {item["provider"]: item["provider_id"]},
             "provider_alias_ids": {item["provider"]: [item["provider_id"]]},
+            "provider_parent_stations": {item["provider"]: item["parent_station"]} if item.get("parent_station") else {},
         })
 
+    if transport_mode != "all":
+        groups = [item for item in groups if _station_mode_match(item, transport_mode) is not False]
+        groups.sort(key=lambda item: (_station_mode_match(item, transport_mode) is not True,
+                                      -_score(normalized, item["name"], item["provider"], item), item["name"]))
     ranked: list[dict[str, Any]] = []
     for item in groups[:min(max(limit, 1), 20)]:
         detail = ", ".join(str(part) for part in (item.get("region"), item.get("country")) if part)
@@ -197,15 +266,19 @@ async def _search_uncached(normalized: str, limit: int) -> dict[str, Any]:
         and (ranked[0].get("is_station") is True or str(ranked[0].get("location_type") or "") == "1")
     )
     explicit_station = explicit_station or exact_confirmed_station
+    if transport_mode != "all" and ranked:
+        exact_matches = [item for item in ranked if sorted(location_key(item["name"]).split()) == sorted(location_key(normalized).split())]
+        explicit_station = explicit_station or (len(exact_matches) == 1 and exact_matches[0] is ranked[0])
     auto = ranked[0] if ranked and explicit_station else None
     return {
         "query": normalized, "stations": ranked, "provider_status": statuses,
         "requires_selection": bool(ranked and not auto),
         "auto_selection": auto,
+        "transport_mode": transport_mode,
     }
 
 
-async def search_stations(query: str, limit: int = 12) -> dict[str, Any]:
+async def search_stations(query: str, limit: int = 12, transport_mode: GroundTransportMode = "all") -> dict[str, Any]:
     normalized = " ".join(str(query or "").split())
-    key = {"generation": APP_VERSION, "ranking": _RANKING_GENERATION, "exact_query": exact_location_key(normalized), "alias_query": location_key(normalized), "limit": limit}
-    return await cached_call("locations.resolve", key, _CACHE_TTL, lambda: _search_uncached(normalized, limit))
+    key = {"generation": APP_VERSION, "ranking": _RANKING_GENERATION, "exact_query": exact_location_key(normalized), "alias_query": location_key(normalized), "limit": limit, "transport_mode": transport_mode}
+    return await cached_call("locations.resolve", key, _CACHE_TTL, lambda: _search_uncached(normalized, limit, transport_mode))

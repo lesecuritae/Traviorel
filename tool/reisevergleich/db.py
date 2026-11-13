@@ -91,6 +91,7 @@ async def db_search(
     not_only_fast_routes: bool = False,
     origin_id: str | None = None,
     destination_id: str | None = None,
+    transport_mode: str = "all",
 ) -> dict[str, Any]:
     departure = datetime.fromisoformat(f"{travel_date}T{departure_after}:00").replace(tzinfo=TZ)
     payload: dict[str, Any] = {
@@ -101,6 +102,7 @@ async def db_search(
         "with_prices": mode != "deutschlandticket",
         "bestprice": bool(bestprice and mode != "deutschlandticket"),
         "not_only_fast_routes": bool(not_only_fast_routes),
+        "transport_mode": transport_mode,
     }
     # departure_after is a hard lower bound and must never be replaced by an
     # arrival-based search. The backend receives the flight cutoff separately
@@ -123,6 +125,17 @@ async def db_search(
         return response.json()
 
 
+async def db_departures(payload: dict[str, Any]) -> dict[str, Any]:
+    """Use the existing internal DB backend; no additional public service."""
+    async with httpx.AsyncClient(timeout=httpx.Timeout(DB_SEARCH_TIMEOUT, connect=10)) as client:
+        response = await client.post(f"{DB_API_URL}/departures", json=payload)
+        response.raise_for_status()
+        result = response.json()
+        if not isinstance(result, dict) or not isinstance(result.get("departures"), list):
+            raise RuntimeError("Invalid DB departure response schema")
+        return result
+
+
 async def db_search_with_retry(
     *,
     origin: str,
@@ -138,6 +151,7 @@ async def db_search_with_retry(
     not_only_fast_routes: bool = False,
     origin_id: str | None = None,
     destination_id: str | None = None,
+    transport_mode: str = "all",
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     diagnostics: list[dict[str, Any]] = []
     last: dict[str, Any] = {"status": "failed", "journeys": []}
@@ -162,6 +176,7 @@ async def db_search_with_retry(
                     not_only_fast_routes=not_only_fast_routes,
                     origin_id=origin_id,
                     destination_id=destination_id,
+                    transport_mode=transport_mode,
                 )
                 diagnostics.append({
                     "source": "db-api",
