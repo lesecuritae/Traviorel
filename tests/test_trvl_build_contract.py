@@ -27,6 +27,8 @@ assert "golang:1.27.3-bookworm@sha256:" in dockerfile
 assert 'git checkout --detach FETCH_HEAD' in dockerfile
 assert "GOTOOLCHAIN=local" in dockerfile
 assert "RUN --network=none" in dockerfile
+assert "source=trvl-test-hosts,target=/etc/hosts" in dockerfile
+assert "93.184.216.34 example.com" in (root / "tool" / "trvl-test-hosts").read_text()
 for package in ("./internal/flights/afklm", "./internal/flights", "./internal/hotels", "./internal/providers", "./internal/ground"):
     assert package in dockerfile
 assert compose.count("TRVL_VERSION: ${TRVL_VERSION:-1.27.0+git.b20e226}") == 2
