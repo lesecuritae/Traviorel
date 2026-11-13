@@ -28,8 +28,12 @@ RUN if [ "$WITH_TRVL" = "1" ]; then git init trvl \
 WORKDIR /src/trvl
 RUN if [ "$WITH_TRVL" = "1" ]; then GOTOOLCHAIN=local go mod download; fi
 # Upstream regressions run without provider/network access or operator credentials.
-RUN --network=none if [ "$WITH_TRVL" = "1" ]; then GOTOOLCHAIN=local GOMAXPROCS=2 GOMEMLIMIT=2GiB go test -p=1 -count=1 -timeout=180s ./internal/flights/afklm ./internal/flights ./internal/hotels ./internal/providers ./internal/ground; fi
-RUN if [ "$WITH_TRVL" = "1" ]; then GOOS="${TARGETOS}" GOARCH="${TARGETARCH:-$(go env GOARCH)}" CGO_ENABLED=0 GOTOOLCHAIN=local go build -trimpath -ldflags "-s -w -X main.Version=${TRVL_VERSION}" -o /out/trvl ./cmd/trvl \
+# Fake-browser tests still resolve example.com through the real safety guard.
+# This public-address fixture exists only in this network-disabled build step;
+# neither the runtime image nor the host DNS configuration receives it.
+RUN --network=none if [ "$WITH_TRVL" = "1" ]; then printf '\n93.184.216.34 example.com\n' >> /etc/hosts \
+    && GOTOOLCHAIN=local GOMAXPROCS=2 GOMEMLIMIT=2GiB go test -p=1 -count=1 -timeout=180s ./internal/flights/afklm ./internal/flights ./internal/hotels ./internal/providers ./internal/ground; fi
+RUN --network=none if [ "$WITH_TRVL" = "1" ]; then export TRVL_NO_TELEMETRY=1 TRVL_DISABLE_UPDATE_CHECK=1; GOOS="${TARGETOS}" GOARCH="${TARGETARCH:-$(go env GOARCH)}" CGO_ENABLED=0 GOTOOLCHAIN=local go build -trimpath -ldflags "-s -w -X main.Version=${TRVL_VERSION}" -o /out/trvl ./cmd/trvl \
     && if [ "${TARGETARCH:-$(go env GOARCH)}" = "$(go env GOARCH)" ]; then /out/trvl version | grep -F "trvl ${TRVL_VERSION}" >/dev/null && /out/trvl hotels --help | grep -F -- "--enrich-rooms" >/dev/null && /out/trvl hotels --help | grep -F -- "--checkin" >/dev/null && /out/trvl flights --help | grep -F -- "--provider" >/dev/null && /out/trvl flights --help | grep -F -- "--return" >/dev/null && /out/trvl ground --help | grep -F -- "--provider" >/dev/null && /out/trvl airport-transfer --help | grep -F -- "--arrival-after" >/dev/null && /out/trvl route --help | grep -F -- "--arrive-by" >/dev/null; fi \
     && cp /tmp/TRVL_COMMIT /out/TRVL_COMMIT && echo "${TRVL_REF}" > /out/TRVL_REF; \
     else mkdir -p /out && printf '#!/bin/sh\nexit 127\n' > /out/trvl && chmod +x /out/trvl \
