@@ -47,6 +47,7 @@ async def _compute(request: TripRequest) -> dict[str, Any]:
                 deutschlandticket_mode="only" if request.deutschlandticket_only else ("include" if request.deutschlandticket else "exclude"),
                 split_candidates=request.feeder_split_candidates,
                 one_way=request.journey_type == "one_way",
+                transport_mode=request.transport_mode,
             ), timeout=TRIP_TIMEOUT)
         except TimeoutError:
             return {

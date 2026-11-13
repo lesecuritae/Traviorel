@@ -9,19 +9,22 @@ from __future__ import annotations
 import asyncio
 import secrets
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import OrderedDict
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
+from pydantic import ValidationError
 
 from . import delay_index, price_history as prices
-from .config import APP_VERSION
+from .config import APP_VERSION, TZ
 from .coverage import analyze_route
-from .models import PriceCalendarRequest, TripRequest
+from .models import DepartureRequest, PriceCalendarRequest, StationSelection, TripRequest
+from .ground_transport import GroundTransportMode
+from .db import db_departures
 from .service import price_calendar, search
-from .station_catalog import search_stations
+from .station_catalog import nearby_modal_options, search_stations
 from .warnings import warnings_for_routes
 
 INSTRUCTIONS = (
@@ -30,7 +33,17 @@ INSTRUCTIONS = (
     "Anreise, Hotel und Gesamtkosten, price_calendar zeigt den günstigsten Tag. Jede Verbindung hat eine ref; damit "
     "liefern mobile_coverage (Mobilfunk entlang der Strecke), travel_warnings (amtliche Warnungen) und "
     "delay_history (wie pünktlich die Verbindung historisch war) weitere Angaben. Traviorel bucht nichts; Preise "
-    "sind Richtwerte und müssen beim Anbieter bestätigt werden."
+    "sind Richtwerte und müssen beim Anbieter bestätigt werden. "
+    "current_time liefert aktuelles Datum und Uhrzeit vom Server. Für heute kann date='heute' gesetzt werden. "
+    "Für 'in einer Stunde' departure_in_minutes=60 verwenden und date/departure_after weglassen; "
+    "der Server berechnet Datum und Uhrzeit. Bei unsicheren Haltestellen find_station nutzen und deren "
+    "selection unverändert als origin_station/destination_station mit dem gefundenen Namen übernehmen. "
+    "Benachbarte Bahnhöfe, Straßenbahn- und Bushaltestellen nicht durch ähnlich klingende Namen ersetzen."
+    " next_departures liefert die nächsten Abfahrten ohne Ziel in allen Richtungen; destination ist ein optionaler "
+    "Fahrtverlaufsfilter für beliebige Start-/Zielorte. Für Bus transport_mode='bus', für reine S-Bahn 'suburban', "
+    "für Nahverkehrszüge S/RB/RE 'local_train' verwenden. Bei Deutschlandticket zusätzlich deutschlandticket_only=true setzen."
+    " Ohne Verkehrsmittelvorgabe meldet next_departures bei klar benachbarten Bus-/Bahnhalten beide getrennt. "
+    "Bei needs_selection nicht raten, sondern die Haltestelle klären."
 )
 
 REF_TTL_SECONDS = 3600
@@ -70,7 +83,11 @@ def _connection(ref: str) -> dict[str, Any]:
 
 def _hm(value: Any) -> str:
     text = str(value or "")
-    return text[11:16] if len(text) >= 16 else text
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return (parsed.replace(tzinfo=TZ) if parsed.tzinfo is None else parsed.astimezone(TZ)).strftime("%H:%M")
+    except ValueError:
+        return text[11:16] if len(text) >= 16 else text
 
 
 def _euro(value: Any) -> str:
@@ -139,34 +156,100 @@ def _text(text: str, structured: dict[str, Any]) -> CallToolResult:
 # ---- Werkzeuge --------------------------------------------------------------------------------
 
 
+def _server_now() -> datetime:
+    return datetime.now(TZ)
+
+
+def _clock_info(now: datetime) -> dict[str, str]:
+    return {"datetime": now.isoformat(timespec="seconds"), "date": now.date().isoformat(),
+            "time": now.strftime("%H:%M"), "timezone": str(TZ), "source": "server_clock"}
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+def current_time() -> CallToolResult:
+    """Aktuelles Datum und Uhrzeit des Servers in seiner konfigurierten Zeitzone; vor zeitbezogenen Abfragen verwenden."""
+    info = _clock_info(_server_now())
+    return _text(f"Serverzeit: {info['datetime']} ({info['timezone']}). Heute ist {info['date']}.", info)
+
+
+def _search_input_error(fields: list[dict[str, str]], now: datetime) -> CallToolResult:
+    info = _clock_info(now)
+    message = "; ".join(f"{e['field']}: {e['message']}" for e in fields)
+    return CallToolResult(is_error=True, content=[TextContent(type="text", text=(
+        f"Ungültige Suchparameter. Serverzeit: {info['datetime']} ({info['timezone']}). {message}. "
+        "Start und Ziel müssen verschieden sein. Für heute date='heute' verwenden; für 'in einer Stunde' "
+        "departure_in_minutes=60 setzen und date/departure_after weglassen."))],
+        structured_content={"error": {"code": "INVALID_ARGUMENTS", "fields": fields},
+                            "current_date": info["date"], "server_time": info})
+
+
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
 async def search_ground(
     origin: str,
     destination: str,
-    date: str,
-    departure_after: str = "06:00",
+    date: str | None = None,
+    departure_after: str | None = None,
     prefer: str = "balanced",
     deutschlandticket: bool = False,
     include_flix: bool = True,
     limit: int = 8,
+    departure_in_minutes: int | None = None,
+    origin_station: StationSelection | None = None,
+    destination_station: StationSelection | None = None,
+    transport_mode: GroundTransportMode = "all",
 ) -> CallToolResult:
     """Bodenverbindungen vergleichen: Deutsche Bahn, Nahverkehr, FlixBus und FlixTrain, mit Preisen.
 
     Args:
         origin: Start, zum Beispiel "Leipzig Hbf".
         destination: Ziel, zum Beispiel "Hamburg Hbf".
-        date: Reisetag YYYY-MM-DD.
-        departure_after: Früheste Abfahrt HH:MM.
+        date: Reisetag YYYY-MM-DD oder "heute"/"today"; ohne Datum gilt heute laut Serverzeit. Keine Vergangenheit.
+        departure_after: Früheste Abfahrt HH:MM. Ohne Uhrzeit: heute ab jetzt, an künftigen Tagen ab 06:00.
         prefer: "balanced", "cheapest", "fastest" oder "fewest_transfers".
         deutschlandticket: Ein Deutschlandticket ist vorhanden (Nahverkehr kostet dann 0 €).
         include_flix: Flix mit einbeziehen.
         limit: Höchstens so viele Verbindungen (1 bis 20).
+        departure_in_minutes: Abfahrt relativ zur aktuellen Serverzeit, z.B. 60 für "in einer Stunde" (0 bis 10080).
+            Dabei date und departure_after weglassen. Mitternacht und Zeitumstellung werden serverseitig aufgelöst.
+        origin_station: Exakte selection aus find_station; origin muss deren name entsprechen. Beide Stationen gemeinsam angeben.
+        destination_station: Exakte selection aus find_station; destination muss deren name entsprechen. Beide Stationen gemeinsam angeben.
+        transport_mode: Nur für diese Anfrage: all, bus, suburban (S-Bahn) oder local_train (S/RB/RE ohne Fernverkehr).
     """
-    request = TripRequest(
-        travel_mode="ground", journey_type="one_way", origin=origin, destination=destination, departure_date=date,
-        departure_after=departure_after, deutschlandticket=deutschlandticket, include_flixbus=include_flix, include_flixtrain=include_flix,
-        include_hotel=False, include_feeder=False,
-    )
+    now = _server_now()
+    explicit_date = date is not None and date.strip().casefold() not in {"heute", "today"}
+    if date is None or date.strip().casefold() in {"heute", "today"}:
+        date = now.date().isoformat()
+    if departure_in_minutes is not None:
+        if isinstance(departure_in_minutes, bool) or not isinstance(departure_in_minutes, int) or not 0 <= departure_in_minutes <= 10080:
+            return _search_input_error([{"field": "departure_in_minutes", "message": "Ganze Minuten zwischen 0 und 10080 angeben"}], now)
+        if departure_after is not None:
+            return _search_input_error([{"field": "departure_in_minutes", "message": "Relative Minuten und feste Abfahrtszeit nicht kombinieren"}], now)
+        target = (now.astimezone(timezone.utc) + timedelta(minutes=departure_in_minutes)).astimezone(TZ)
+        if explicit_date and date != target.date().isoformat():
+            return _search_input_error([{"field": "date", "message": "Das feste Datum widerspricht dem relativen Abfahrtszeitpunkt; date weglassen"}], now)
+        if target.fold and target.utcoffset() != target.replace(fold=0).utcoffset():
+            return _search_input_error([{"field": "departure_in_minutes", "message": "Der Zeitpunkt liegt in der zweiten doppelten Stunde der Zeitumstellung; die HH:MM-Schnittstelle kann diesen Zeitpunkt nicht eindeutig darstellen"}], now)
+        # A relative request owns its whole timestamp, including the date at midnight.
+        date, departure_after = target.date().isoformat(), target.strftime("%H:%M")
+    elif departure_after is None:
+        if date == now.date().isoformat() and now.fold and now.utcoffset() != now.replace(fold=0).utcoffset():
+            return _search_input_error([{"field": "departure_after", "message": "Die aktuelle doppelte Stunde der Zeitumstellung ist mit HH:MM nicht eindeutig darstellbar"}], now)
+        departure_after = now.strftime("%H:%M") if date == now.date().isoformat() else "06:00"
+    try:
+        request = TripRequest(
+            travel_mode="ground", journey_type="one_way", origin=origin, destination=destination, departure_date=date,
+            departure_after=departure_after, deutschlandticket=deutschlandticket, include_flixbus=include_flix, include_flixtrain=include_flix,
+            include_hotel=False, include_feeder=False,
+            origin_station=origin_station, destination_station=destination_station,
+            transport_mode=transport_mode,
+        )
+    except ValidationError as exc:
+        fields = [{"field": ".".join(str(v) for v in e["loc"]) or "request", "message": e["msg"]}
+                  for e in exc.errors(include_url=False, include_context=False, include_input=False)]
+        for field in fields:
+            if field["field"] == "departure_date":
+                field["field"] = "date"
+        return _search_input_error(fields, now)
     result = await search(request)
     connections = _find_connections(result)
     key = {"cheapest": lambda c: (c.get("price") is None, c.get("price") or 0), "fastest": lambda c: c.get("duration_minutes") or 10**6,
@@ -175,11 +258,13 @@ async def search_ground(
         connections = sorted(connections, key=key)
     connections = connections[: max(1, min(int(limit), 20))]
     if not connections:
-        return _text(f"Keine Verbindungen von {origin} nach {destination} am {date} gefunden.", {"connections": []})
+        return _text(f"Keine Verbindungen von {origin} nach {destination} am {date} ab {departure_after} gefunden.",
+                     {"connections": [], "search": {"date": date, "departure_after": departure_after, "timezone": str(TZ)}})
     refs = _remember(connections)
-    lines = [f"{len(connections)} Verbindungen {origin} → {destination} am {date}:"] + [_connection_line(r, c) for r, c in zip(refs, connections, strict=True)]
+    lines = [f"{len(connections)} Verbindungen {origin} → {destination} am {date} ab {departure_after} ({TZ}):"] + [_connection_line(r, c) for r, c in zip(refs, connections, strict=True)]
     lines.append("Mit der ref in Klammern gibt es mehr: mobile_coverage, travel_warnings, delay_history.")
-    return _text("\n".join(lines), {"connections": [{"ref": r, **{k: c.get(k) for k in ("provider", "type", "origin", "destination", "departure", "arrival", "duration_minutes", "transfers", "price", "currency", "offer_url")}} for r, c in zip(refs, connections, strict=True)]})
+    return _text("\n".join(lines), {"search": {"date": date, "departure_after": departure_after, "timezone": str(TZ)},
+        "connections": [{"ref": r, **{k: c.get(k) for k in ("provider", "type", "origin", "destination", "departure", "arrival", "duration_minutes", "transfers", "price", "currency", "offer_url")}} for r, c in zip(refs, connections, strict=True)]})
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
@@ -466,17 +551,143 @@ async def stop_watching(watch_id: int) -> CallToolResult:
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
-async def find_station(query: str, limit: int = 8) -> CallToolResult:
+async def find_station(query: str, limit: int = 8, transport_mode: GroundTransportMode = "all") -> CallToolResult:
     """Bahnhöfe und Haltestellen zu einem Suchbegriff finden (für genaue Start- und Zielangaben).
 
     Args:
         query: Name, zum Beispiel "Leipzig".
         limit: Höchstens so viele Treffer (1 bis 20).
+        transport_mode: Expliziter Verkehrsmittelwunsch nur für diese Suche: all, bus, suburban oder local_train.
     """
-    result = await search_stations(query, max(1, min(int(limit), 20)))
+    result = await search_stations(query, max(1, min(int(limit), 20)), transport_mode=transport_mode)
     stations = [row for row in result.get("stations") or [] if isinstance(row, dict)]
     lines = [f"- {row.get('name')}" + (f" ({row['region']})" if row.get("region") else "") for row in stations]
-    return _text("\n".join(lines) or "Keine Treffer.", {"stations": [{"name": r.get("name"), "region": r.get("region"), "ids": r.get("provider_ids")} for r in stations]})
+    return _station_search_result(result, lines)
+
+
+def _station_search_result(result: dict[str, Any], lines: list[str] | None = None) -> CallToolResult:
+    stations = [row for row in result.get("stations") or [] if isinstance(row, dict)]
+    statuses = result.get("provider_status") or {}
+    if not stations and statuses and all(value == "failed" for value in statuses.values()):
+        return CallToolResult(is_error=True, content=[TextContent(type="text", text="Die Haltestellenquellen konnten nicht erfolgreich abgefragt werden." )],
+                              structured_content={"error": {"code": "SOURCE_UNAVAILABLE"}, "provider_status": statuses})
+    if lines is None:
+        lines = [f"- {row.get('name')}" for row in stations]
+    return _text("\n".join(lines) or "Keine Treffer.", {
+        "status": ("needs_selection" if result.get("requires_selection", False) else "ok") if stations else "not_found",
+        "requires_selection": result.get("requires_selection", False),
+        "transport_mode": result.get("transport_mode", "all"),
+        "stations": [{"name": r.get("name"), "region": r.get("region"), "ids": r.get("provider_ids"),
+            "selection": {k: r[k] for k in ("name", "provider", "provider_id", "provider_ids", "provider_alias_ids", "latitude", "longitude") if k in r},
+            "modes": r.get("modes") or []} for r in stations]})
+
+
+async def _departure_station(name: str, mode: GroundTransportMode, provided: StationSelection | None):
+    if provided:
+        return provided
+    result = await search_stations(name, 8, transport_mode=mode)
+    row = result.get("auto_selection")
+    if row is None:
+        return _station_search_result(result)
+    return StationSelection.model_validate({k: row[k] for k in (
+        "name", "provider", "provider_id", "provider_ids", "provider_alias_ids", "latitude", "longitude") if k in row})
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
+async def next_departures(
+    origin: str, destination: str | None = None,
+    transport_mode: GroundTransportMode = "all", deutschlandticket_only: bool = False,
+    departure_in_minutes: int = 0, duration_minutes: int = 90, limit: int = 8,
+    origin_station: StationSelection | None = None, destination_station: StationSelection | None = None,
+) -> CallToolResult:
+    """Nächste Abfahrten ab beliebiger Haltestelle, ohne Ziel in allen Richtungen.
+
+    Args:
+        origin: Name des Bahnhofs oder der Haltestelle, mit Ort zur eindeutigen Zuordnung.
+        destination: Optional: Nur Fahrten in Richtung/über dieses Ziel; keine reine Suche im Endzieltext.
+        transport_mode: all; bus für Buswunsch; suburban nur S-Bahn; local_train für S-Bahn/RB/RE.
+        deutschlandticket_only: Fernverkehr ausschließen. Filtert Nahverkehrsarten, bestätigt keine individuellen Tarifausnahmen.
+        departure_in_minutes: Relativ zur aktuellen Serverzeit, 0 für jetzt, 60 für in einer Stunde; maximal 10080.
+        duration_minutes: Auskunftsfenster, 1 bis 360 Minuten.
+        limit: Höchstens 1 bis 20 Abfahrten.
+        origin_station: Optionale exakte selection aus find_station, deren Name origin entsprechen muss.
+        destination_station: Optionale exakte selection aus find_station für das Ziel.
+    """
+    now = _server_now()
+    try:
+        request = DepartureRequest(origin=origin, destination=destination, transport_mode=transport_mode,
+            deutschlandticket_only=deutschlandticket_only, departure_in_minutes=departure_in_minutes,
+            duration_minutes=duration_minutes, limit=limit, origin_station=origin_station, destination_station=destination_station)
+    except ValidationError as exc:
+        return _search_input_error([{"field": ".".join(map(str, e["loc"])) or "request", "message": e["msg"]}
+                                   for e in exc.errors(include_url=False, include_input=False, include_context=False)], now)
+    if request.transport_mode == "all" and request.origin_station is None and request.destination is None:
+        try:
+            catalog = await search_stations(request.origin, 8)
+            choices = nearby_modal_options(catalog)
+        except Exception:
+            choices = []
+        if choices:
+            replies = await asyncio.gather(*(next_departures(
+                row["name"], transport_mode=mode, deutschlandticket_only=request.deutschlandticket_only,
+                departure_in_minutes=request.departure_in_minutes, duration_minutes=request.duration_minutes,
+                limit=request.limit, origin_station=StationSelection.model_validate({k: row[k] for k in (
+                    "name", "provider", "provider_id", "provider_ids", "provider_alias_ids", "latitude", "longitude") if k in row}),
+            ) for mode, row in choices))
+            groups = {mode: reply.structured_content or {} for (mode, _), reply in zip(choices, replies, strict=True)}
+            departures = [item for data in groups.values() for item in data.get("departures", [])]
+            departures.sort(key=lambda item: item.get("expected_departure") or "")
+            errors = sum(reply.is_error for reply in replies)
+            text = "Bus- und Bahnhalt liegen hier dicht beieinander. Ohne Verkehrsmittelvorgabe werden beide getrennt abgefragt:\n"
+            text += "\n".join(("Bus: " if mode == "bus" else "Nahverkehrszüge: ") + reply.content[0].text
+                              for (mode, _), reply in zip(choices, replies, strict=True))
+            return CallToolResult(is_error=errors == len(replies), content=[TextContent(type="text", text=text)],
+                structured_content={"status": "failed" if errors == len(replies) else ("partial" if errors else ("ok" if departures else "empty")),
+                                    "by_transport": groups, "departures": departures[:request.limit], "server_time": _clock_info(now)})
+    try:
+        selected = await _departure_station(request.origin, request.transport_mode, request.origin_station)
+        if isinstance(selected, CallToolResult):
+            return selected
+        target = None
+        if request.destination:
+            target = await _departure_station(request.destination, request.transport_mode, request.destination_station)
+            if isinstance(target, CallToolResult):
+                return target
+    except Exception:
+        return CallToolResult(is_error=True, content=[TextContent(type="text", text="Die Haltestellenauswahl konnte nicht geprüft werden." )],
+                              structured_content={"error": {"code": "SOURCE_UNAVAILABLE"}})
+    if not selected.id_for("db") or (target and not target.id_for("db")):
+        return CallToolResult(is_error=True, content=[TextContent(type="text", text="Für diese Auswahl fehlt eine DB-Haltestellen-ID; bitte einen anderen bestätigten Treffer aus find_station wählen.")],
+                              structured_content={"error": {"code": "NO_DB_STATION_ID"}})
+    when = (now.astimezone(timezone.utc) + timedelta(minutes=request.departure_in_minutes)).astimezone(TZ)
+    payload = {"station": selected.name, "station_id": selected.id_for("db"), "when": when.isoformat(),
+               "transport_mode": request.transport_mode, "deutschlandticket_only": request.deutschlandticket_only,
+               "duration_minutes": request.duration_minutes, "limit": request.limit}
+    if target:
+        payload.update(destination=target.name, destination_id=target.id_for("db"))
+    try:
+        result = await db_departures(payload)
+    except Exception:
+        return CallToolResult(is_error=True, content=[TextContent(type="text", text="Die DB-Abfahrtsauskunft konnte nicht erfolgreich abgefragt werden. Das ist kein Nachweis fehlender Abfahrten.")],
+                              structured_content={"error": {"code": "SOURCE_UNAVAILABLE"}, "server_time": _clock_info(now)})
+    if result.get("status") == "failed":
+        return CallToolResult(is_error=True, content=[TextContent(type="text", text="Die DB-Abfahrtsquelle hat die Anfrage nicht erfolgreich beantwortet." )],
+                              structured_content={"error": {"code": "SOURCE_UNAVAILABLE"}, "attempts": result.get("attempts")})
+    rows = result["departures"]
+    lines = [f"Abfahrten ab {selected.name}, ab {when.isoformat(timespec='minutes')} ({TZ})"
+             + (f" Richtung/über {target.name}:" if target else " – alle Richtungen:")]
+    labels = {"bus": "Bus", "suburban": "S-Bahn", "regional": "Regionalzug", "regionalExpress": "Regionalexpress", "tram": "Straßenbahn"}
+    lines.extend(f"- {row.get('line') or 'Linie unbekannt'} ({labels.get(row.get('product'), 'Verkehrsmittel nicht eingeordnet')}) "
+                 f"ab {row.get('station') or selected.name} → {row.get('direction') or 'Richtung unbekannt'}: "
+                 f"Plan {_hm(row.get('planned_departure'))}, erwartet {_hm(row.get('expected_departure'))}"
+                 + (f", Gleis/Steig {row['platform']}" if row.get('platform') else "") for row in rows)
+    if not rows:
+        lines.append("Keine passenden Abfahrten im abgefragten Zeitraum gemeldet.")
+    if result.get("cancelled_departures"):
+        lines.append(f"{len(result['cancelled_departures'])} gemeldete Ausfälle sind separat in cancelled_departures enthalten.")
+    if result.get("related_departures"):
+        lines.append("Weitere Abfahrten an anderen Haltestellen wurden getrennt in related_departures abgelegt; sie gelten nicht als Abfahrten am gewählten Halt.")
+    return _text("\n".join(lines), {**result, "server_time": _clock_info(now), "requested_from": when.isoformat()})
 
 
 def _compact(value: Any, title: str, limit: int = 1800) -> str:

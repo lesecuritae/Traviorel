@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .ground_transport import route_matches_transport
+
 import asyncio
 import re
 from datetime import datetime
@@ -120,6 +122,7 @@ async def search(request: ReiseRequest, *, deutschlandticket_only: bool = False)
                 "toPlace": destination["id"],
                 "time": local_dt.isoformat(),
                 "transitModes": (
+                    {"suburban": "SUBURBAN", "bus": "BUS,COACH", "local_train": "REGIONAL_RAIL,SUBURBAN"}[request.transport_mode] if request.transport_mode != "all" else
                     "REGIONAL_RAIL,SUBURBAN,SUBWAY,TRAM,BUS,FERRY,FUNICULAR"
                     if deutschlandticket_only else "TRANSIT"
                 ),
@@ -180,6 +183,8 @@ def normalize_routes(
             if isinstance(leg, dict) and str(leg.get("mode") or "").upper() not in {"WALK", "FOOT"}
         ]
         if not transit_legs:
+            continue
+        if not route_matches_transport({"legs": transit_legs}, request.transport_mode):
             continue
         if deutschlandticket_only:
             forbidden_modes = {"HIGHSPEED_RAIL", "LONG_DISTANCE", "NIGHT_RAIL", "AIRPLANE", "COACH"}

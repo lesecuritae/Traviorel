@@ -8,7 +8,7 @@
 
 Rail, the Deutschlandticket, split tickets, FlixTrain, FlixBus, flights, airport feeders, transfers, and accommodation are combined into a single itinerary. Traviorel does not merely look for a low price somewhere. Every part of the journey must fit together both chronologically and logically.
 
-Current version: **0.3.2**
+Current version: **0.3.3**
 
 Traviorel does not sell or book anything itself. If a provider supplies a usable offer link, it can be opened directly from the result. Where no direct link is available, Traviorel offers a suitable manual cross-check, for example with Deutsche Bahn, Google Flights, Google Hotels, or Google Maps. Price and availability must always be verified with the actual provider.
 
@@ -93,6 +93,18 @@ Warnings never alter connections, ranking, or prices and cannot trigger automati
 ## MCP server for AI assistants
 
 Traviorel serves Streamable HTTP MCP at `/mcp`. It provides travel search, live delays, price history, warnings, and station lookup as readable text and structured data. It cannot book travel; `watch_route` and `stop_watching` only change the local route watch list.
+
+`current_time` exposes the server clock with its time zone. `search_ground` accepts `date="today"` or `"heute"`; a search for today without a time starts now. Use `departure_in_minutes=60` for “in an hour” and let the server calculate the date and time.
+
+`next_departures` needs only `origin` and returns departures in all directions. An optional `destination` filters by actual journey routing, rather than assuming that a train's final destination names every intermediate stop. Responses distinguish scheduled and expected times, direction, platforms and cancellations.
+
+Transport selection is per request: `bus`, `suburban` (S-Bahn), `local_train` (S-Bahn/RB/RE), or unrestricted `all`. Without a selection, a clearly co-located bus/rail pair within 300 m is queried separately for both; other ambiguous places require a choice. `find_station` supplies reusable `selection` objects. `deutschlandticket_only` excludes long-distance product categories, but a departure board does not establish individual fare exceptions.
+
+Example tool arguments for a voice assistant, with no fixed city:
+
+```json
+{"name":"next_departures","arguments":{"origin":"<stop and city>","transport_mode":"bus","departure_in_minutes":60}}
+```
 
 In Open WebUI, add a Streamable HTTP MCP connection under Admin Settings → Integrations. Use `http://traviorel-app:8000/mcp` when both services share a Docker network, or `https://<your-server>/mcp` when accessing Traviorel through its public HTTPS host. Select “Traviorel” in the chat tools to show its results in the chat. Set `TRAVIOREL_MCP=0` to disable the endpoint.
 
@@ -370,7 +382,7 @@ regression tests.
 
 ### Use Traviorel and trvl together through MCP
 
-While trvl remains in the standard image, its own MCP server should be available as an optional second service reachable only on the Docker network. Open WebUI will get a separate connection to trvl's `travel` tool. Traviorel's `/mcp` and its own tools will remain available, with both connections selectable in the same chat. A temporary Open WebUI test called `traviorel_find_station` and `trvl_travel` in one chat successfully.
+While trvl remains in the standard image, its own MCP server should be available as an optional second service reachable only on the Docker network. Open WebUI will get a separate connection to trvl's `travel` tool. Traviorel's `/mcp` and its own tools will remain available, with both connections selectable in the same chat.
 
 Permanent operation still needs a Compose service for `trvl mcp`, a securely managed read-only token, state and health checks, setup documentation, and a restart test in Open WebUI. The trvl endpoint should have no public port. Its write operations remain blocked by the read-only token. When native providers eventually replace trvl, this optional MCP connection can be removed without changing Traviorel's `/mcp`.
 
