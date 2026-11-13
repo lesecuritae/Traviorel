@@ -1,5 +1,5 @@
 # Changelog
-## Unreleased
+## 0.3.3 - 2026-11-13
 
 - DB-Abfragen verwenden `curl_cffi 0.17.0` und standardmäßig Firefox 155. Ein Bibliotheksupdate allein ließ die bisherigen Firefox-Profile unverändert und behob `452 / OPS_BLOCKED` nicht. Mit der neuen Kombination lieferten Ortssuche, Fahrplan und Preisaktualisierung im begrenzten Livevergleich wieder Ergebnisse. Das ist eine Stichprobe, keine dauerhafte Verfügbarkeitsgarantie der DB-Schnittstelle.
 - `trvl 1.27.0` und der aktualisierte db-vendo-client-Pin bleiben erhalten. Bestehende Transport-Authentifizierung, Zielhost-Beschränkungen und Sitzungsbindung bleiben bestehen; Betreiber können das Browserprofil weiterhin über `DB_CFFI_IMPERSONATE_POOL` konfigurieren.

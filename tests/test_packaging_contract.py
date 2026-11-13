@@ -41,8 +41,16 @@ assert 'HISTORY_SNAPSHOT_INTERVAL_SECONDS: "${HISTORY_SNAPSHOT_INTERVAL_SECONDS:
 assert 'SEARCH_DEPARTURE_TOLERANCE_MINUTES: "${SEARCH_DEPARTURE_TOLERANCE_MINUTES:-15}"' in compose
 assert "HEALTHCHECK" in app_dockerfile and "/api/health" in app_dockerfile
 assert "HEALTHCHECK" in db_api_dockerfile and "/health" in db_api_dockerfile
-assert "traviorel/0.3.2" in db_api_server and "traviorel/0.0.6" not in db_api_server
-assert 'version = "0.3.2"' in pyproject
+# Keep release metadata and runtime defaults aligned without pinning this test
+# to a particular release number.
+import tomllib
+from reisevergleich.config import APP_VERSION
+release_version = tomllib.loads(pyproject)["project"]["version"]
+assert release_version == APP_VERSION
+assert f"traviorel/{release_version}" in db_api_server
+assert f"USER_AGENT: traviorel/{release_version}" in compose
+assert f"**{release_version}**" in (root / "README.de.md").read_text()
+assert f"**{release_version}**" in (root / "README.en.md").read_text()
 assert "Pillow" not in runtime_requirements
 for coverage_file in ("provider.py", "mapper.py", "analyzer.py", "cache.py"):
     assert (root / "tool" / "reisevergleich" / "coverage" / coverage_file).is_file()
