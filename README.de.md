@@ -96,6 +96,8 @@ Traviorel bringt unter `/mcp` (Streamable HTTP) einen MCP-Server mit. Ein Assist
 
 | Werkzeug | Was es tut |
 |---|---|
+| `current_time` | aktuelles Datum, Uhrzeit und Zeitzone des Servers |
+| `next_departures` | nächste Abfahrten ohne Ziel in allen Richtungen; optional mit Ziel-/Fahrtverlaufsfilter |
 | `search_ground` | Bahn, Nahverkehr, FlixBus und FlixTrain mit Preisen; jede Verbindung bekommt eine `ref` |
 | `plan_flight_trip` | Flugreise mit Anreise, Flug, Hotel, Transfers und Gesamtkosten |
 | `price_calendar_search` | günstigster Tag über mehrere Tage |
@@ -106,6 +108,18 @@ Traviorel bringt unter `/mcp` (Streamable HTTP) einen MCP-Server mit. Ein Assist
 | `price_history` | wie sich der Preis einer Strecke entwickelt hat (Verlauf einer Fahrt oder Übersicht nach Vorlauf) |
 | `watch_route`, `list_watched_routes`, `stop_watching` | bis zu 5 Bodenstrecken täglich beobachten, damit der Preisverlauf wächst |
 | `find_station` | Bahnhöfe und Haltestellen zu einem Namen |
+
+`search_ground` versteht `date="heute"` und verwendet ohne Uhrzeit für heute die aktuelle Serverzeit. Für „in einer Stunde“ wird `departure_in_minutes=60` gesetzt; der Server berechnet auch den Datumswechsel. `current_time` gibt die maßgebliche Serverzeit mit Zeitzone zurück.
+
+`next_departures` braucht nur `origin`. Mit `destination` werden Abfahrten anhand einer tatsächlichen Verbindung zum Ziel gefiltert, nicht anhand des Endzieltexts am Fahrzeug. Die Antworten unterscheiden Richtung, Planzeit, erwartete Abfahrt und Ausfälle. UTC-Zeitstempel werden für die Textantwort in die Serverzeitzone umgerechnet.
+
+Ein Verkehrsmittelwunsch gilt nur für die jeweilige Anfrage: `bus` für Bus, `suburban` für reine S-Bahn, `local_train` für S-Bahn/RB/RE und `all` ohne Einschränkung. Bei einem klaren, höchstens 300 m entfernten Bus-/Bahnpaar meldet eine Abfahrtstafel ohne Vorgabe beide getrennt. Bei anderen Mehrdeutigkeiten gibt sie eine Auswahl zurück. `find_station` liefert dafür wiederverwendbare `selection`-Objekte. Der `deutschlandticket_only`-Filter schließt Fernverkehrsarten aus; die Abfahrtstafel kann tarifliche Sonderfälle nicht verbindlich prüfen.
+
+Beispielargumente für einen Sprachassistenten, ohne fest eingebaute Stadt:
+
+```json
+{"name":"next_departures","arguments":{"origin":"<Haltestelle mit Ort>","transport_mode":"bus","departure_in_minutes":60}}
+```
 
 - **Verspätungsindex:** Die historischen Verspätungen stammen aus dem offenen Datensatz `piebro/deutsche-bahn-data` (CC BY 4.0). Beim ersten `delay_history` baut Traviorel im Hintergrund einen kleinen lokalen Index der letzten Monate auf (etwa 2 Minuten und 600 MB Download je Monat, einmalig; `DELAY_INDEX_MONTHS`, Standard 3). Danach antwortet die Abfrage sofort. Abschalten mit `DELAY_INDEX=0`.
 - **Preisverlauf:** Die Quellen liefern nur den aktuellen Preis, und es gibt keine offene Quelle für historische Ticketpreise. Traviorel schreibt deshalb bei jeder frischen Suche den günstigsten Preis je Anbieter, Strecke, Reisetag und Abrufdatum in eine kleine lokale Datenbank (`price-history.sqlite3` im Datenordner, zwei Jahre). Beobachtete Strecken fragt der Server einmal am Tag für Reisetage in 2, 7, 14, 21 und 28 Tagen ab (`PRICE_WATCH_INTERVAL_HOURS`). Der Verlauf beginnt leer und wird erst nach Wochen aussagekräftig. Abschalten mit `PRICE_HISTORY=0`.
@@ -389,7 +403,7 @@ Live-Tests benötigen erreichbare externe Provider und werden getrennt von den r
 
 ### Traviorel und trvl gemeinsam über MCP
 
-Solange trvl im Standardimage enthalten ist, soll sein eigener MCP-Server optional als zweiter, nur im Docker-Netz erreichbarer Dienst laufen. Open WebUI erhält dafür eine separate Verbindung zum `travel`-Werkzeug von trvl. Traviorels `/mcp` mit seinen eigenen Werkzeugen bleibt bestehen; beide Verbindungen sollen im selben Chat auswählbar sein. Ein temporärer Test mit `traviorel_find_station` und `trvl_travel` im selben Open-WebUI-Chat war erfolgreich.
+Solange trvl im Standardimage enthalten ist, soll sein eigener MCP-Server optional als zweiter, nur im Docker-Netz erreichbarer Dienst laufen. Open WebUI erhält dafür eine separate Verbindung zum `travel`-Werkzeug von trvl. Traviorels `/mcp` mit seinen eigenen Werkzeugen bleibt bestehen; beide Verbindungen sollen im selben Chat auswählbar sein.
 
 Für den dauerhaften Betrieb fehlen noch ein Compose-Dienst für `trvl mcp`, ein sicher verwalteter Lesetoken, Zustands- und Healthchecks sowie die dokumentierte Einrichtung und ein Wiederanlauftest in Open WebUI. Der trvl-Endpunkt soll keinen öffentlichen Port erhalten. Schreibende trvl-Funktionen bleiben mit dem Lesetoken gesperrt. Wenn eigene Provider trvl später ersetzen, kann diese optionale MCP-Verbindung entfallen, ohne Traviorels `/mcp` zu ändern.
 

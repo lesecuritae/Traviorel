@@ -1,6 +1,10 @@
 # Changelog
 ## 0.3.3 - 2026-11-13
 
+- MCP: aktuelle Serverzeit, „heute“ und relative Abfahrtszeiten, Abfahrtstafel ohne Ziel mit allen Richtungen sowie optionalem Ziel, typisierte Verkehrsmittelauswahl und getrennte Bus-/Bahn-Auskunft bei klarer Überschneidung. Vergangene Daten und widersprüchliche Haltestellen führen zu verständlichen Eingabefehlern.
+- Haltestellen: Suchrelevanz vor Hauptbahnhof-Bonus, gezielte Abfrage umgekehrter Orts-/Haltestellennamen und getrennte Identitäten benachbarter Bus-, Straßenbahn- und Bahnhalte. Quellenfehler werden nicht als leerer Katalog gecacht.
+- Veröffentlichung: Nach erfolgreichen Tag-Image-Builds erzeugt die Pipeline den GitHub-Release aus den zugehörigen Release-Notes. Alte separate Release-Notes-Dateien sind entfernt; die Versionshistorie bleibt hier im Changelog.
+
 - DB-Abfragen verwenden `curl_cffi 0.17.0` und standardmäßig Firefox 155. Ein Bibliotheksupdate allein ließ die bisherigen Firefox-Profile unverändert und behob `452 / OPS_BLOCKED` nicht. Mit der neuen Kombination lieferten Ortssuche, Fahrplan und Preisaktualisierung im begrenzten Livevergleich wieder Ergebnisse. Das ist eine Stichprobe, keine dauerhafte Verfügbarkeitsgarantie der DB-Schnittstelle.
 - `trvl 1.27.0` und der aktualisierte db-vendo-client-Pin bleiben erhalten. Bestehende Transport-Authentifizierung, Zielhost-Beschränkungen und Sitzungsbindung bleiben bestehen; Betreiber können das Browserprofil weiterhin über `DB_CFFI_IMPERSONATE_POOL` konfigurieren.
 

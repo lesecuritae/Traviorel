@@ -35,7 +35,7 @@ DuckDB 2.0 remains outside the existing `<2` contract. The separate qs update an
 ## Validation
 
 - `bash scripts/check.sh`: passed under Python 3.13, with current allowed dependencies.
-- `python -m pytest -q`: 96 passed, no failures or skips.
+- `python -m pytest -q`: 169 passed, no failures or skips, including the subsequent MCP time, transport-selection and station-identity regressions.
 - Before the fix, the new regression module had four failures and three passes. The final module has eight passing tests, including transparent reporting of an upstream block without replay.
 - Targeted browser-profile and security regressions: 35 passed.
 - The full application Docker build passed its trvl version and seven CLI/help contracts, with trvl pinned to `4f6b5da14874b34260bdfa2c114fb9b4800223c6`.
