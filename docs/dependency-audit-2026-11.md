@@ -25,7 +25,7 @@ Official PyPI metadata, npm registry metadata and upstream Git tags were checked
 | Uvicorn | 0.54.0 | 0.54.0 | 0.54.0 |
 | DuckDB | 1.5.6 | 1.5.6 | 2.0.0 |
 | MCP | 2.2.0 | 2.3.0 | 2.3.0 |
-| trvl | 1.24.0 | 1.27.0 | 1.27.0 |
+| trvl | 1.24.0 before 0.3.3 | 1.27.0+git.b20e226 in 0.3.4 | 1.27.0 stable; reviewed newer snapshot |
 | db-vendo-client | c228bff in updated backend | c228bff / v6.11.3 | c228bff / v6.11.3 |
 | qs (explicit backend override) | 6.15.3 pin | 6.15.3 pin retained | 6.17.1 |
 | uuid (explicit backend override) | 11.1.1 pin | 11.1.1 pin retained | 14.0.3; latest 11.x is 11.1.1 |
@@ -44,3 +44,5 @@ DuckDB 2.0 remains outside the existing `<2` contract. The separate qs update an
 An initial Python 3.14 host run stops in the existing static-name checker on the interpreter-generated `__conditional_annotations__` name. This audit does not claim a green Python 3.14 suite; the production and CI runtime tested here is Python 3.13.
 
 Sources: [curl_cffi release](https://github.com/lexiforest/curl_cffi/releases/tag/v0.17.0), [trvl release](https://github.com/MikkoParkkola/trvl/releases/tag/v1.27.0), [db-vendo-client release](https://github.com/public-transport/db-vendo-client/releases/tag/v6.11.3), [PyPI](https://pypi.org/), [npm registry](https://registry.npmjs.org/).
+
+Snapshot follow-up: [trvl source/Go/hotel audit](trvl-snapshot-audit-2026-11.md). The 0.3.3 validation above is retained as historical evidence; the 0.3.4 candidate has172 passing Python tests and five passing offline upstream Go packages.
