@@ -1,4 +1,9 @@
 # Changelog
+## Unreleased
+
+- DB-Abfragen verwenden `curl_cffi 0.17.0` und standardmäßig Firefox 155. Ein Bibliotheksupdate allein ließ die bisherigen Firefox-Profile unverändert und behob `452 / OPS_BLOCKED` nicht. Mit der neuen Kombination lieferten Ortssuche, Fahrplan und Preisaktualisierung im begrenzten Livevergleich wieder Ergebnisse. Das ist eine Stichprobe, keine dauerhafte Verfügbarkeitsgarantie der DB-Schnittstelle.
+- `trvl 1.27.0` und der aktualisierte db-vendo-client-Pin bleiben erhalten. Bestehende Transport-Authentifizierung, Zielhost-Beschränkungen und Sitzungsbindung bleiben bestehen; Betreiber können das Browserprofil weiterhin über `DB_CFFI_IMPERSONATE_POOL` konfigurieren.
+
 ## 0.3.2 - 2026-10-01
 
 - Das Standardimage verwendet jetzt trvl v1.24.0 (gepinnt auf Commit `4f2b0d0`). Die von Traviorel verwendeten fünf CLI-Befehle und ihre Flags wurden gegen das offizielle Release-Binary geprüft; die JSON-Modelltypen blieben gegenüber v1.21.4 unverändert.

@@ -62,6 +62,6 @@ lokaler Zug-/Monatscache sind eine eigenständige Traviorel-Implementierung.
 
 ## Direkte Python-Abhängigkeiten
 
-Die direkt in `tool/requirements.txt` deklarierten Python-Pakete behalten ihre jeweiligen Upstream-Lizenzen. Dazu gehören FastAPI, HTTPX, Pydantic, Uvicorn, `curl_cffi` und DuckDB. Die tatsächlich installierten Versionen ergeben sich aus den dort definierten Versionsgrenzen; `curl_cffi` ist auf `0.16.1` gepinnt.
+Die direkt in `tool/requirements.txt` deklarierten Python-Pakete behalten ihre jeweiligen Upstream-Lizenzen. Dazu gehören FastAPI, HTTPX, Pydantic, Uvicorn, `curl_cffi` und DuckDB. Die tatsächlich installierten Versionen ergeben sich aus den dort definierten Versionsgrenzen; `curl_cffi` ist auf `0.17.0` gepinnt.
 
 Diese Datei ist eine Übersicht und ersetzt keine Originallizenz. Beim Verteilen gebauter Images müssen die darin enthaltenen Drittanbieter-Lizenzdateien und Hinweise erhalten bleiben.
