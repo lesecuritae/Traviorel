@@ -35,7 +35,7 @@ Traviorel lädt die beiden großen Transportbibliotheken beim Container-Build au
 ## db-vendo-client
 
 - Projekt: [public-transport/db-vendo-client](https://github.com/public-transport/db-vendo-client)
-- Build-Pin: Commit `5afe12a80e02cf111f38f3fa30ae87aaa532d1d6`
+- Build-Pin: Commit `c228bffaa2796b814f1884237262c16d90f7df96`
 - Lizenz: **ISC License**
 - Die Originallizenz wird beim Container-Build nach `/usr/share/licenses/db-vendo-client/LICENSE.md` kopiert.
 

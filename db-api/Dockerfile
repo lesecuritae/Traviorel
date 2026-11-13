@@ -1,5 +1,5 @@
 FROM node:24-bookworm-slim AS db-vendo-builder
-ARG DB_VENDO_COMMIT=5afe12a80e02cf111f38f3fa30ae87aaa532d1d6
+ARG DB_VENDO_COMMIT=c228bffaa2796b814f1884237262c16d90f7df96
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*

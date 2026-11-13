@@ -37,7 +37,7 @@ jobs:
             image: lesecuritae/traviorel-db-api
             context: ./db-api
             dockerfile: ./db-api/Dockerfile
-            build_args: DB_VENDO_COMMIT=5afe12a80e02cf111f38f3fa30ae87aaa532d1d6
+            build_args: DB_VENDO_COMMIT=c228bffaa2796b814f1884237262c16d90f7df96
 
     steps:
       - name: Check out repository
