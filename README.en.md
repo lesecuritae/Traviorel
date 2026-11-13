@@ -66,6 +66,8 @@ The complete DB logic runs independently of trvl.
 
 Traviorel uses, among other components, [db-vendo-client](https://github.com/public-transport/db-vendo-client), its own DB and DBnav processing, and `curl_cffi`. The latter helps with HTTP requests where basic clients quickly fail because of bot protection or other countermeasures.
 
+The DB bridge uses `curl_cffi 0.17.0` with Firefox 155 by default. Operators can still override `DB_CFFI_IMPERSONATE_POOL`; older profiles may receive `OPS_BLOCKED` even with the updated library. See the [compatibility and dependency audit](docs/dependency-audit-2026-11.md).
+
 Results are not accepted blindly. Traviorel validates time windows, fare semantics, stops, transfers, and—for complete journeys—the subsequent chronology.
 
 A provider may fail or time out without automatically taking down the entire search.

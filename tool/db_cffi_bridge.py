@@ -22,7 +22,9 @@ router = APIRouter()
 
 _ALLOWED_HOSTS = {"app.services-bahn.de", "int.bahn.de", "www.bahn.de"}
 _TOKEN = read_internal_token()
-_DEFAULT_FIREFOX_POOL = ("firefox133", "firefox135", "firefox144", "firefox147")
+# Keep the default aligned with the pinned curl_cffi release. The older pool
+# receives OPS_BLOCKED even with 0.17.0; randomly selecting it breaks DB searches.
+_DEFAULT_FIREFOX_POOL = ("firefox155",)
 _ROTATE_STATUSES = {403, 429}
 _SESSION_TTL_SECONDS = max(60, min(int(os.environ.get("DB_CFFI_SESSION_TTL", "900")), 3600))
 _MAX_SESSIONS = max(8, min(int(os.environ.get("DB_CFFI_MAX_SESSIONS", "128")), 512))
