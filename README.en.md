@@ -98,7 +98,7 @@ Traviorel serves Streamable HTTP MCP at `/mcp`. It provides travel search, live 
 
 `next_departures` needs only `origin` and returns departures in all directions. An optional `destination` filters by actual journey routing, rather than assuming that a train's final destination names every intermediate stop. Responses distinguish scheduled and expected times, direction, platforms and cancellations.
 
-Transport selection is per request: `bus`, `suburban` (S-Bahn), `local_train` (S-Bahn/RB/RE), or unrestricted `all`. Without a selection, a clearly co-located bus/rail pair within 300 m is queried separately for both; other ambiguous places require a choice. `find_station` supplies reusable `selection` objects. `deutschlandticket_only` excludes long-distance product categories, but a departure board does not establish individual fare exceptions.
+Transport selection is per request: `bus`, `suburban` (S-Bahn), `local_train` (S-Bahn/RB/RE), or unrestricted `all`. Without a selection, a clearly co-located bus/rail pair within 300 m is queried separately for both; other ambiguous places require a choice. The departure board resolves stop IDs on the server for the requested mode. Names, word order and repeated city labels are matched against source data without a city-specific mapping. Genuine ambiguity still requires a choice. `find_station` supplies reusable `selection` objects for `search_ground`. `deutschlandticket_only` excludes long-distance product categories, but a departure board does not establish individual fare exceptions.
 
 Example tool arguments for a voice assistant, with no fixed city:
 
@@ -107,6 +107,8 @@ Example tool arguments for a voice assistant, with no fixed city:
 ```
 
 In Open WebUI, add a Streamable HTTP MCP connection under Admin Settings → Integrations. Use `http://traviorel-app:8000/mcp` when both services share a Docker network, or `https://<your-server>/mcp` when accessing Traviorel through its public HTTPS host. Select “Traviorel” in the chat tools to show its results in the chat. Set `TRAVIOREL_MCP=0` to disable the endpoint.
+
+`search_hotels` searches accommodation without planning flights. Confirmed stay totals and nightly-only prices remain separate; a source failure is not reported as proof that no rooms exist.
 
 ## Why trvl is included
 

@@ -99,6 +99,7 @@ Traviorel bringt unter `/mcp` (Streamable HTTP) einen MCP-Server mit. Ein Assist
 | `current_time` | aktuelles Datum, Uhrzeit und Zeitzone des Servers |
 | `next_departures` | nächste Abfahrten ohne Ziel in allen Richtungen; optional mit Ziel-/Fahrtverlaufsfilter |
 | `search_ground` | Bahn, Nahverkehr, FlixBus und FlixTrain mit Preisen; jede Verbindung bekommt eine `ref` |
+| `search_hotels` | Hotels ohne Flugplanung; bestätigte Aufenthalts- und Nachtpreise getrennt |
 | `plan_flight_trip` | Flugreise mit Anreise, Flug, Hotel, Transfers und Gesamtkosten |
 | `price_calendar_search` | günstigster Tag über mehrere Tage |
 | `mobile_coverage` | Mobilfunk entlang einer Verbindung (Bundesnetzagentur, OpenCellID) |
@@ -113,7 +114,7 @@ Traviorel bringt unter `/mcp` (Streamable HTTP) einen MCP-Server mit. Ein Assist
 
 `next_departures` braucht nur `origin`. Mit `destination` werden Abfahrten anhand einer tatsächlichen Verbindung zum Ziel gefiltert, nicht anhand des Endzieltexts am Fahrzeug. Die Antworten unterscheiden Richtung, Planzeit, erwartete Abfahrt und Ausfälle. UTC-Zeitstempel werden für die Textantwort in die Serverzeitzone umgerechnet.
 
-Ein Verkehrsmittelwunsch gilt nur für die jeweilige Anfrage: `bus` für Bus, `suburban` für reine S-Bahn, `local_train` für S-Bahn/RB/RE und `all` ohne Einschränkung. Bei einem klaren, höchstens 300 m entfernten Bus-/Bahnpaar meldet eine Abfahrtstafel ohne Vorgabe beide getrennt. Bei anderen Mehrdeutigkeiten gibt sie eine Auswahl zurück. `find_station` liefert dafür wiederverwendbare `selection`-Objekte. Der `deutschlandticket_only`-Filter schließt Fernverkehrsarten aus; die Abfahrtstafel kann tarifliche Sonderfälle nicht verbindlich prüfen.
+Ein Verkehrsmittelwunsch gilt nur für die jeweilige Anfrage: `bus` für Bus, `suburban` für reine S-Bahn, `local_train` für S-Bahn/RB/RE und `all` ohne Einschränkung. Bei einem klaren, höchstens 300 m entfernten Bus-/Bahnpaar meldet eine Abfahrtstafel ohne Vorgabe beide getrennt. Bei anderen Mehrdeutigkeiten gibt sie eine Auswahl zurück. Die Abfahrtstafel bestimmt die Haltestellen-ID passend zum Verkehrsmittel auf dem Server. Namen, Wortreihenfolge und doppelte Ortsangaben werden anhand der Quelldaten abgeglichen; es gibt keine fest eingebaute Städtezuordnung. Echte Mehrdeutigkeiten erfordern weiterhin eine Auswahl. `find_station` liefert für `search_ground` wiederverwendbare `selection`-Objekte. Der `deutschlandticket_only`-Filter schließt Fernverkehrsarten aus; die Abfahrtstafel kann tarifliche Sonderfälle nicht verbindlich prüfen.
 
 Beispielargumente für einen Sprachassistenten, ohne fest eingebaute Stadt:
 

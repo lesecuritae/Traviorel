@@ -14,7 +14,7 @@ from .location_resolver import exact_location_key, has_airport_context, location
 from .ground_transport import GroundTransportMode
 
 _CACHE_TTL = 300
-_RANKING_GENERATION = "stations-v12"
+_RANKING_GENERATION = "stations-v13"
 
 
 def _base_station_query(value: str) -> str:
@@ -30,6 +30,14 @@ def _distance_km(left: dict[str, Any], right: dict[str, Any]) -> float | None:
     dlat, dlon = lat2 - lat1, lon2 - lon1
     value = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
     return 6371 * 2 * asin(sqrt(value))
+
+
+def _catalog_distance_km(left: dict[str, Any], right: dict[str, Any]) -> float | None:
+    """Compare matching source coordinates before mixing provider geometries."""
+    a, b = left.get("provider_locations") or {}, right.get("provider_locations") or {}
+    distances = [_distance_km(a[p], b[p]) for p in a.keys() & b.keys()]
+    known = [distance for distance in distances if distance is not None]
+    return min(known) if known else _distance_km(left, right)
 
 
 _SECONDARY_STATION_WORDS = {
@@ -163,6 +171,20 @@ def _station_mode_match(item: dict[str, Any], transport_mode: GroundTransportMod
     return bool(modes & selected)
 
 
+def unique_station_alias(result: dict[str, Any], query: str, mode: GroundTransportMode) -> dict[str, Any] | None:
+    """Resolve word order/repeated region labels only for one known typed stop.
+
+    A city alone or two same-named stops must still require a choice. Mode
+    evidence comes from the existing catalog, never from agent-supplied IDs.
+    """
+    tokens = set(location_key(query).split())
+    if mode == "all" or len(tokens) < 2:
+        return None
+    matches = [row for row in result.get("stations") or []
+               if isinstance(row, dict) and set(location_key(row.get("name")).split()) == tokens]
+    return matches[0] if len(matches) == 1 and _station_mode_match(matches[0], mode) is True else None
+
+
 def _query_matches_station(query: str, item: dict[str, Any]) -> bool:
     anchors = set(location_key(_base_station_query(query)).split())
     if not anchors:
@@ -184,7 +206,7 @@ def nearby_modal_options(result: dict[str, Any]) -> list[tuple[str, dict[str, An
     trains = [row for row in rows if _station_mode_match(row, "local_train") is True]
     for bus in buses:
         for train in trains:
-            distance = _distance_km(bus, train)
+            distance = _catalog_distance_km(bus, train)
             if distance is not None and distance <= 0.3 and bus.get("provider_id") != train.get("provider_id"):
                 return [("bus", bus), ("local_train", train)]
     return []
@@ -268,6 +290,8 @@ async def _search_uncached(normalized: str, limit: int, transport_mode: GroundTr
         group = next((entry for entry in groups if _same_group(entry, item, transport_mode)), None)
         if group:
             provider = item["provider"]
+            group.setdefault("provider_locations", {}).setdefault(provider, {
+                "latitude": item.get("latitude"), "longitude": item.get("longitude")})
             group["provider_ids"].setdefault(provider, item["provider_id"])
             aliases = group.setdefault("provider_alias_ids", {}).setdefault(provider, [])
             if item["provider_id"] not in aliases:
@@ -280,6 +304,8 @@ async def _search_uncached(normalized: str, limit: int, transport_mode: GroundTr
             continue
         groups.append({
             **item,
+            "provider_locations": {item["provider"]: {
+                "latitude": item.get("latitude"), "longitude": item.get("longitude")}},
             "provider_ids": {item["provider"]: item["provider_id"]},
             "provider_alias_ids": {item["provider"]: [item["provider_id"]]},
             "provider_parent_stations": {item["provider"]: item["parent_station"]} if item.get("parent_station") else {},
