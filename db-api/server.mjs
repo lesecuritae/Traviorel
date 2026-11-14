@@ -663,6 +663,12 @@ function delayMinutes(seconds, actual, planned) {
   return Number.isFinite(a) && Number.isFinite(b) ? Math.round((a - b) / 60000) : null;
 }
 
+function normalizeRemarks(remarks) {
+  return (Array.isArray(remarks) ? remarks : []).slice(0, 20).filter(x => x && typeof x === 'object').map(x =>
+    Object.fromEntries(['type', 'code', 'text', 'summary', 'url'].filter(k => typeof x[k] === 'string').map(k => [k, x[k].slice(0, 4000)]))
+  ).filter(x => x.text || x.summary);
+}
+
 function normalizeLeg(leg) {
   return {
     trip_id: leg?.tripId ? String(leg.tripId) : null,
@@ -685,6 +691,7 @@ function normalizeLeg(leg) {
     departure: isoValue(plannedDeparture(leg)),
     arrival: isoValue(plannedArrival(leg)),
     cancelled: Boolean(leg?.cancelled),
+    remarks: normalizeRemarks(leg?.remarks),
     departure_delay_minutes: delayMinutes(leg?.departureDelay, leg?.departure, leg?.plannedDeparture),
     arrival_delay_minutes: delayMinutes(leg?.arrivalDelay, leg?.arrival, leg?.plannedArrival),
     platform: leg?.departurePlatform || null,
@@ -957,6 +964,7 @@ function normalizeDeparture(item, station) {
     delay_minutes: delayMinutes(item.delay, item.when, item.plannedWhen),
     platform: item.platform || null, planned_platform: item.plannedPlatform || null,
     cancelled: Boolean(item.cancelled),
+    remarks: normalizeRemarks(item.remarks),
     station_match_verified: stationVerified,
   };
 }
@@ -988,11 +996,11 @@ async function departuresWithProfile(profileName, body) {
       plannedWhen: leg.departure,
       when: new Date(new Date(leg.departure).getTime() + (leg.departure_delay_minutes || 0) * 60000).toISOString(),
       direction: leg.direction || leg.destination?.name, delay: leg.departure_delay_minutes == null ? null : leg.departure_delay_minutes * 60,
-      platform: leg.platform, plannedPlatform: leg.planned_platform, cancelled: leg.cancelled,
+      platform: leg.platform, plannedPlatform: leg.planned_platform, cancelled: leg.cancelled, remarks: leg.remarks,
     }));
   } else {
     const response = await withTimeout(client.departures(station.id, {
-      when, duration, results: Math.min(limit * 3, 60), remarks: true,
+      when, duration: profileName === 'dbnav' ? Math.min(duration, 60) : duration, results: Math.min(limit * 3, 60), remarks: true,
       products: transportProducts(transportMode, body.deutschlandticket_only ? 'deutschlandticket' : 'all'),
     }), REQUEST_TIMEOUT_MS, `${profileName} departures`);
     if (!Array.isArray(response?.departures)) throw new Error('invalid departure response schema');
@@ -1013,6 +1021,7 @@ async function departuresWithProfile(profileName, body) {
   return {
     status: items.some((item) => item.station_match_verified && !item.cancelled) ? 'ok' : 'empty', source: profileName,
     station, destination: body.destination || null, when: when.toISOString(), transport_mode: transportMode,
+    source_window_minutes: profileName === 'dbnav' && !body.destination ? Math.min(duration, 60) : duration,
     departures: items.filter((item) => item.station_match_verified && !item.cancelled).slice(0, limit),
     cancelled_departures: items.filter((item) => item.station_match_verified && item.cancelled).slice(0, limit),
     related_departures: items.filter((item) => !item.station_match_verified).slice(0, limit),
@@ -1030,7 +1039,7 @@ async function searchDepartures(body) {
         ? await withDbnavSlot(() => departuresWithProfile(profileName, body))
         : await departuresWithProfile(profileName, body);
       attempts.push({profile: profileName, ok: true, departures: result.departures.length});
-      if (result.departures.length) return {...result, attempts};
+      if (result.departures.length || result.cancelled_departures.length) return {...result, attempts};
       empty ??= result;
     } catch (error) {
       if (error instanceof HttpError) throw error;
@@ -1772,6 +1781,14 @@ async function runSelfTests() {
     }
     const parentBoard = normalizeDeparture({...boardRows[0], stop: {id: 'child', station: {id: 'start'}}}, {id: 'start', name: 'Start'});
     if (!parentBoard.station_match_verified) throw new Error('explicit parent station relation lost');
+    const noticeRow = {...boardRows[0], remarks: [{type: 'warning', text: 'Fixture bridge works', url: 'https://example.com/notice'}]};
+    if (normalizeDeparture(noticeRow, {id: 'start', name: 'Start'}).remarks[0]?.text !== 'Fixture bridge works') throw new Error('board notice lost');
+    if (normalizeLeg({...noticeRow, origin: {id: 'start'}, destination: {id: 'end'}}).remarks[0]?.text !== 'Fixture bridge works') throw new Error('journey notice lost');
+    clients.dbnav = {...makeClient('dbnav'), departures: async () => ({departures: [{...noticeRow, cancelled: true}]})};
+    clients.db = {...makeClient('db'), departures: async () => {throw new Error('cancelled primary evidence replaced by fallback');}};
+    const onlyCancelled = await searchDepartures({station: 'Start', when: boardWhen, duration_minutes: 90, limit: 8});
+    if (onlyCancelled.cancelled_departures.length !== 1 || onlyCancelled.attempts.length !== 1) throw new Error('cancelled board lost');
+    if (onlyCancelled.source_window_minutes !== 60) throw new Error('dbnav window limit hidden');
     const cancelledBoard = normalizeDeparture({...boardRows[0], cancelled: true, when: null, delay: null}, {id: 'start', name: 'Start'});
     if (cancelledBoard.delay_minutes !== null) throw new Error('missing actual time fabricated a delay');
     const products = transportProducts('local_train', 'all');

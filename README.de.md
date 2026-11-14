@@ -127,6 +127,14 @@ Beispielargumente für einen Sprachassistenten, ohne fest eingebaute Stadt:
 - **Einrichtung:** Adresse `https://<dein-server>/mcp`. Im gemeinsamen Docker-Netz kann Open WebUI `http://traviorel-app:8000/mcp` verwenden. In Open WebUI unter Admin-Einstellungen → Integrationen eine MCP-Verbindung (Streamable HTTP) hinzufügen. Danach steht „Traviorel“ in der Werkzeugauswahl der Chats; die lesbaren Werkzeugantworten erscheinen im Chat.
 - Abschalten: `TRAVIOREL_MCP=0`.
 
+### Verkehrsmeldungen in normalen MCP-Antworten
+
+`next_departures` und `search_ground` liefern `service_notices`, `notice_sources` und den geprüften Umfang mit der normalen Antwort. Hinweise werden auch bei leeren Abfahrtstafeln gesucht. DB-Hinweise bleiben erhalten; Transitous ergänzt zugeordnete Meldungen. Amtliche Änderungsfahrpläne können bereits aus dem Fahrplan entfernte Züge erklären. Deren Bahnhofsidentität wird gegen die EVA-Nummer geprüft, bevor wiederkehrende Ausfälle nach Datum, Uhrzeit und Verkehrsmittel zugeordnet werden.
+
+Die Zusatzprüfung verändert keine Verbindungen, Preise oder Rangfolge. Stationshinweise beweisen keine vollständige Betroffenheit einer Reise zum optionalen Ziel. Unbekannte Datumsregeln und weitere PDF-Meldungsarten bleiben als amtlicher Quellenlink sichtbar, ohne daraus einen Ausfall zu erfinden. Ersatzverkehr wird nur genannt, wenn die Quelle ihn tatsächlich liefert. Fehlende Meldungen oder ein Quellfehler bedeuten nicht störungsfreien Betrieb.
+
+Dokumente werden 30 Minuten, Transitous-Meldungen 60 Sekunden gecacht. HTTP-Größe, Laufzeit und PDF-Unterprozessressourcen sind begrenzt; der PDF-Pfad ist für die Linux-Container vorgesehen. `SERVICE_NOTICES_ENABLED=0` deaktiviert zusätzliche Quellen, erhält aber mitgelieferte DB-Hinweise. Die Quellenabdeckung ist regional unterschiedlich. Ein zusätzlicher direkter nationaler GTFS-RT-Import ist ohne passenden statischen ID-Index ausdrücklich nicht aktiviert; es gibt keine Zuordnung nur anhand einer Liniennummer.
+
 ## trvl ist optional
 
 Bahn, Flix, Flüge, Hotels und Flughafen-Transfers laufen über eigene Direktwege (DB-Logik, Flix, Skiplagged, Transitous). Mit `TRVL_ENABLED=0` oder dem Image `traviorel-app-lite` läuft Traviorel ganz ohne trvl. Dann fehlen nur Taxi-Schätzungen und Anbieter, die es nur über trvl gibt. Solange trvl im Image ist, ist es zusätzlich ein Rückfall, wenn ein Direktweg ausfällt.

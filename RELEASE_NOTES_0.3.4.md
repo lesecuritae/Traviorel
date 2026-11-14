@@ -11,6 +11,8 @@
 - MCP-Abfahrtstafeln wählen Haltestellen passend zum Verkehrsmittel serverseitig, statt vom Modell gelieferte IDs zu übernehmen. Quellenbasierte Namensvarianten und Bus-/Bahn-Zuordnung werden für mehrere Städte geprüft; echte Mehrdeutigkeiten bleiben sichtbar.
 - Eigenes MCP-Werkzeug `search_hotels` verwendet die vorhandene Hotelsuche ohne Flugplanung und trennt belegte Gesamtpreise von Nachtpreisen.
 
+- Normale MCP-Abfragen liefern Verkehrsmeldungen und Quellstatus auch bei leeren Tafeln. DB-Hinweise bleiben erhalten; geprüfte amtliche Änderungsfahrpläne ergänzen wiederkehrende Ausfälle, Transitous zugeordnete Meldungen. Quellen- und Parsingfehler bleiben sichtbar.
+
 ## English
 
 - Reviewed trvl snapshot `b20e2265a63a4d229abff7b20f5649f2e9f948dc`, identified as `1.27.0+git.b20e226`, not a new stable upstream release.
@@ -22,9 +24,11 @@
 - MCP departure boards resolve mode-specific stops server-side rather than accepting model-selected IDs. Source-driven aliases and bus/rail selection are tested across multiple cities; genuine ambiguity remains explicit.
 - Dedicated `search_hotels` MCP tool reuses accommodation search without flight planning and separates verified stay totals from nightly prices.
 
+- Normal MCP queries include service notices and source status even for empty boards. DB remarks are retained; identity-checked official change documents add recurring cancellations and Transitous contributes attached alerts. Source and parsing failures remain explicit.
+
 ## Validation
 
-Python 3.13: check.sh passed and 186 pytest tests passed, with 0 failures / 0 skips. All five selected upstream Go packages and the full/Lite/DB-API image builds passed. Offline fixtures are not proof that every live provider is available.
+Python 3.13: check.sh passed and 206 pytest tests passed, with 0 failures / 0 skips. All five selected upstream Go packages and the full/Lite/DB-API image builds passed. Offline fixtures are not proof that every live provider is available.
 
 Isolated live MCP and Lite checks passed. Both the normal hotel path and a fresh forced-trvl control returned 3 hotels with verified stay totals. One earlier forced-trvl attempt timed out; the old/new controls completed in 26.8s/29.0s. Intermittent Google throttling and unavailable browser-dependent Booking coverage remain explicit limits. No claim of complete live-provider availability is made.
 

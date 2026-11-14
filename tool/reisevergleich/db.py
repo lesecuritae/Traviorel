@@ -327,6 +327,7 @@ def compact_route(route: dict[str, Any], *, include_legs: bool = True) -> dict[s
                     "departure": local_iso(leg.get("departure")),
                     "arrival": local_iso(leg.get("arrival")),
                     "cancelled": True if leg.get("cancelled") else None,
+                    "remarks": leg.get("remarks"),
                     "departure_delay_minutes": leg.get("departure_delay_minutes"),
                     "arrival_delay_minutes": leg.get("arrival_delay_minutes"),
                     "platform": leg.get("platform"),

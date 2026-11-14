@@ -7,6 +7,7 @@ fragen ``mobile_coverage``, ``travel_warnings`` und ``delay_history`` später ge
 from __future__ import annotations
 
 import asyncio
+import os
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
@@ -27,6 +28,7 @@ from .service import price_calendar, search
 from .provider_cache import hotel_search as search_hotel_provider
 from .station_catalog import nearby_modal_options, search_stations, unique_station_alias
 from .location_resolver import location_key
+from .service_notices import collect_service_notices, render_notice_lines, board_notices
 from .warnings import warnings_for_routes
 
 INSTRUCTIONS = (
@@ -259,13 +261,17 @@ async def search_ground(
     if key:
         connections = sorted(connections, key=key)
     connections = connections[: max(1, min(int(limit), 20))]
+    notice_board = {"departures": [leg for connection in connections for leg in connection.get("legs", [])]}
+    when = datetime.fromisoformat(f"{date}T{departure_after}:00").replace(tzinfo=TZ)
+    notice_info = await _normal_notice_info(origin, request.origin_station, when, 120, request.transport_mode, notice_board)
     if not connections:
-        return _text(f"Keine Verbindungen von {origin} nach {destination} am {date} ab {departure_after} gefunden.",
-                     {"connections": [], "search": {"date": date, "departure_after": departure_after, "timezone": str(TZ)}})
+        return _text(f"Keine Verbindungen von {origin} nach {destination} am {date} ab {departure_after} gefunden.\n" + "\n".join(render_notice_lines(notice_info)),
+                     {"connections": [], **notice_info, "search": {"date": date, "departure_after": departure_after, "timezone": str(TZ)}})
     refs = _remember(connections)
     lines = [f"{len(connections)} Verbindungen {origin} → {destination} am {date} ab {departure_after} ({TZ}):"] + [_connection_line(r, c) for r, c in zip(refs, connections, strict=True)]
+    lines.extend(render_notice_lines(notice_info))
     lines.append("Mit der ref in Klammern gibt es mehr: mobile_coverage, travel_warnings, delay_history.")
-    return _text("\n".join(lines), {"search": {"date": date, "departure_after": departure_after, "timezone": str(TZ)},
+    return _text("\n".join(lines), {**notice_info, "search": {"date": date, "departure_after": departure_after, "timezone": str(TZ)},
         "connections": [{"ref": r, **{k: c.get(k) for k in ("provider", "type", "origin", "destination", "departure", "arrival", "duration_minutes", "transfers", "price", "currency", "offer_url")}} for r, c in zip(refs, connections, strict=True)]})
 
 
@@ -656,6 +662,19 @@ async def _departure_station(name: str, mode: GroundTransportMode, provided: Sta
         "name", "provider", "provider_id", "provider_ids", "provider_alias_ids", "latitude", "longitude") if k in row})
 
 
+async def _normal_notice_info(name, selected, when, duration, mode, board):
+    if os.getenv("SERVICE_NOTICES_ENABLED", "1") == "0":
+        return {"service_notices": board_notices(board), "notice_sources": [{"source": "supplementary", "status": "disabled", "coverage": "partial"}]}
+    try:
+        async with asyncio.timeout(25):
+            selected = selected or await _departure_station(name, mode, None)
+            if isinstance(selected, CallToolResult):
+                return {"service_notices": board_notices(board), "notice_sources": [{"source": "supplementary", "status": "station_unresolved", "coverage": "partial"}]}
+            return await collect_service_notices(selected, when, duration, mode, board=board)
+    except Exception:
+        return {"service_notices": board_notices(board), "notice_sources": [{"source": "supplementary", "status": "unavailable", "coverage": "partial"}]}
+
+
 async def next_departures(
     origin: str, destination: str | None = None,
     transport_mode: GroundTransportMode = "all", deutschlandticket_only: bool = False,
@@ -705,7 +724,9 @@ async def next_departures(
                               for (mode, _), reply in zip(choices, replies, strict=True))
             return CallToolResult(is_error=errors == len(replies), content=[TextContent(type="text", text=text)],
                 structured_content={"status": "failed" if errors == len(replies) else ("partial" if errors else ("ok" if departures else "empty")),
-                                    "by_transport": groups, "departures": departures[:request.limit], "server_time": _clock_info(now)})
+                                    "by_transport": groups, "departures": departures[:request.limit],
+                                    "service_notices": [n for data in groups.values() for n in data.get("service_notices", [])],
+                                    "notice_sources": [n for data in groups.values() for n in data.get("notice_sources", [])], "server_time": _clock_info(now)})
     try:
         selected = await _departure_station(request.origin, request.transport_mode, request.origin_station)
         if isinstance(selected, CallToolResult):
@@ -730,11 +751,11 @@ async def next_departures(
     try:
         result = await db_departures(payload)
     except Exception:
-        return CallToolResult(is_error=True, content=[TextContent(type="text", text="Die DB-Abfahrtsauskunft konnte nicht erfolgreich abgefragt werden. Das ist kein Nachweis fehlender Abfahrten.")],
-                              structured_content={"error": {"code": "SOURCE_UNAVAILABLE"}, "server_time": _clock_info(now)})
+        result = {"status": "failed", "departures": []}
+    notice_info = await _normal_notice_info(selected.name, selected, when, request.duration_minutes, request.transport_mode, result)
     if result.get("status") == "failed":
-        return CallToolResult(is_error=True, content=[TextContent(type="text", text="Die DB-Abfahrtsquelle hat die Anfrage nicht erfolgreich beantwortet." )],
-                              structured_content={"error": {"code": "SOURCE_UNAVAILABLE"}, "attempts": result.get("attempts")})
+        return CallToolResult(is_error=True, content=[TextContent(type="text", text="Die DB-Abfahrtsquelle hat die Anfrage nicht erfolgreich beantwortet.\n" + "\n".join(render_notice_lines(notice_info)))],
+                              structured_content={"error": {"code": "SOURCE_UNAVAILABLE"}, "attempts": result.get("attempts"), **notice_info})
     rows = result["departures"]
     lines = [f"Abfahrten ab {selected.name}, ab {when.isoformat(timespec='minutes')} ({TZ})"
              + (f" Richtung/über {target.name}:" if target else " – alle Richtungen:")]
@@ -749,7 +770,8 @@ async def next_departures(
         lines.append(f"{len(result['cancelled_departures'])} gemeldete Ausfälle sind separat in cancelled_departures enthalten.")
     if result.get("related_departures"):
         lines.append("Weitere Abfahrten an anderen Haltestellen wurden getrennt in related_departures abgelegt; sie gelten nicht als Abfahrten am gewählten Halt.")
-    return _text("\n".join(lines), {**result, "server_time": _clock_info(now), "requested_from": when.isoformat()})
+    lines.extend(render_notice_lines(notice_info))
+    return _text("\n".join(lines), {**result, **notice_info, "server_time": _clock_info(now), "requested_from": when.isoformat()})
 
 
 @mcp.tool(name="next_departures", annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
@@ -761,6 +783,8 @@ async def departure_board(
     """Live-Abfahrten ab einem Bahnhof oder Halt, optional Richtung/über ein Ziel.
 
     Die Haltestellen-ID wird auf dem Server passend zum Verkehrsmittel bestimmt.
+    Verkehrsmeldungen werden auch bei leerer Tafel mit Quelle und Quellstatus geprüft.
+    Stationsmeldungen sind keine vollständige Prüfung des Fahrtverlaufs.
     Keine provider_id oder selection selbst auswählen; find_station ist vorher
     nicht nötig. Echte Mehrdeutigkeit wird als Auswahl zurückgegeben.
 

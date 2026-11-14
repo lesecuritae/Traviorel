@@ -110,6 +110,14 @@ In Open WebUI, add a Streamable HTTP MCP connection under Admin Settings → Int
 
 `search_hotels` searches accommodation without planning flights. Confirmed stay totals and nightly-only prices remain separate; a source failure is not reported as proof that no rooms exist.
 
+### Service notices in normal MCP responses
+
+`next_departures` and `search_ground` include `service_notices`, `notice_sources` and the checked scope in the ordinary response, even when no departures were returned. DB remarks are retained, Transitous contributes attached alerts, and official station change documents can explain trains already removed from the timetable. A document's station identity must match the selected EVA identifier before recurring cancellations are matched by date, time and transport mode.
+
+Enrichment never changes journeys, prices or ranking. A station notice is not proof that the entire route to an optional destination is affected. Unknown date rules and other PDF notice types remain available through the official document link without inventing cancellations. Replacement transport is reported only when actually supplied. Missing alerts and failed sources do not establish normal service.
+
+Documents are cached for 30 minutes and Transitous alerts for 60 seconds. HTTP sizes, execution time and PDF subprocess resources are bounded; the PDF path targets Linux containers. `SERVICE_NOTICES_ENABLED=0` disables supplementary sources while retaining DB remarks. Regional coverage varies. Direct national GTFS-RT ingestion is deliberately not enabled without its matching static identifier index; line names alone are never used for cross-feed identity.
+
 ## Why trvl is included
 
 While looking for usable data sources, I found [trvl](https://github.com/MikkoParkkola/trvl).
