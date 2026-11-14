@@ -8,7 +8,7 @@
 
 Bahn, Deutschlandticket, Split-Tickets, FlixTrain, FlixBus, Flüge, Flughafenzubringer, Transfers und Unterkünfte landen in einer gemeinsamen Planung. Traviorel schaut dabei nicht nur, ob irgendwo ein günstiger Preis auftaucht. Die einzelnen Teile müssen zeitlich und logisch zusammenpassen.
 
-Aktuelle Version: **0.3.3**
+Aktuelle Version: **0.3.4**
 
 Traviorel verkauft und bucht selbst nichts. Wenn ein Provider einen brauchbaren Angebotslink liefert, kann er direkt aus dem Ergebnis geöffnet werden. Wo kein direkter Link vorhanden ist, gibt es an passenden Stellen einen manuellen Gegencheck, etwa bei der Deutschen Bahn, Google Flights, Google Hotels oder Google Maps. Preis und Verfügbarkeit werden beim eigentlichen Anbieter noch einmal geprüft.
 
@@ -99,6 +99,7 @@ Traviorel bringt unter `/mcp` (Streamable HTTP) einen MCP-Server mit. Ein Assist
 | `current_time` | aktuelles Datum, Uhrzeit und Zeitzone des Servers |
 | `next_departures` | nächste Abfahrten ohne Ziel in allen Richtungen; optional mit Ziel-/Fahrtverlaufsfilter |
 | `search_ground` | Bahn, Nahverkehr, FlixBus und FlixTrain mit Preisen; jede Verbindung bekommt eine `ref` |
+| `search_hotels` | Hotels ohne Flugplanung; bestätigte Aufenthalts- und Nachtpreise getrennt |
 | `plan_flight_trip` | Flugreise mit Anreise, Flug, Hotel, Transfers und Gesamtkosten |
 | `price_calendar_search` | günstigster Tag über mehrere Tage |
 | `mobile_coverage` | Mobilfunk entlang einer Verbindung (Bundesnetzagentur, OpenCellID) |
@@ -113,7 +114,7 @@ Traviorel bringt unter `/mcp` (Streamable HTTP) einen MCP-Server mit. Ein Assist
 
 `next_departures` braucht nur `origin`. Mit `destination` werden Abfahrten anhand einer tatsächlichen Verbindung zum Ziel gefiltert, nicht anhand des Endzieltexts am Fahrzeug. Die Antworten unterscheiden Richtung, Planzeit, erwartete Abfahrt und Ausfälle. UTC-Zeitstempel werden für die Textantwort in die Serverzeitzone umgerechnet.
 
-Ein Verkehrsmittelwunsch gilt nur für die jeweilige Anfrage: `bus` für Bus, `suburban` für reine S-Bahn, `local_train` für S-Bahn/RB/RE und `all` ohne Einschränkung. Bei einem klaren, höchstens 300 m entfernten Bus-/Bahnpaar meldet eine Abfahrtstafel ohne Vorgabe beide getrennt. Bei anderen Mehrdeutigkeiten gibt sie eine Auswahl zurück. `find_station` liefert dafür wiederverwendbare `selection`-Objekte. Der `deutschlandticket_only`-Filter schließt Fernverkehrsarten aus; die Abfahrtstafel kann tarifliche Sonderfälle nicht verbindlich prüfen.
+Ein Verkehrsmittelwunsch gilt nur für die jeweilige Anfrage: `bus` für Bus, `suburban` für reine S-Bahn, `local_train` für S-Bahn/RB/RE und `all` ohne Einschränkung. Bei einem klaren, höchstens 300 m entfernten Bus-/Bahnpaar meldet eine Abfahrtstafel ohne Vorgabe beide getrennt. Bei anderen Mehrdeutigkeiten gibt sie eine Auswahl zurück. Die Abfahrtstafel bestimmt die Haltestellen-ID passend zum Verkehrsmittel auf dem Server. Namen, Wortreihenfolge und doppelte Ortsangaben werden anhand der Quelldaten abgeglichen; es gibt keine fest eingebaute Städtezuordnung. Echte Mehrdeutigkeiten erfordern weiterhin eine Auswahl. `find_station` liefert für `search_ground` wiederverwendbare `selection`-Objekte. Der `deutschlandticket_only`-Filter schließt Fernverkehrsarten aus; die Abfahrtstafel kann tarifliche Sonderfälle nicht verbindlich prüfen.
 
 Beispielargumente für einen Sprachassistenten, ohne fest eingebaute Stadt:
 
@@ -125,6 +126,14 @@ Beispielargumente für einen Sprachassistenten, ohne fest eingebaute Stadt:
 - **Preisverlauf:** Die Quellen liefern nur den aktuellen Preis, und es gibt keine offene Quelle für historische Ticketpreise. Traviorel schreibt deshalb bei jeder frischen Suche den günstigsten Preis je Anbieter, Strecke, Reisetag und Abrufdatum in eine kleine lokale Datenbank (`price-history.sqlite3` im Datenordner, zwei Jahre). Beobachtete Strecken fragt der Server einmal am Tag für Reisetage in 2, 7, 14, 21 und 28 Tagen ab (`PRICE_WATCH_INTERVAL_HOURS`). Der Verlauf beginnt leer und wird erst nach Wochen aussagekräftig. Abschalten mit `PRICE_HISTORY=0`.
 - **Einrichtung:** Adresse `https://<dein-server>/mcp`. Im gemeinsamen Docker-Netz kann Open WebUI `http://traviorel-app:8000/mcp` verwenden. In Open WebUI unter Admin-Einstellungen → Integrationen eine MCP-Verbindung (Streamable HTTP) hinzufügen. Danach steht „Traviorel“ in der Werkzeugauswahl der Chats; die lesbaren Werkzeugantworten erscheinen im Chat.
 - Abschalten: `TRAVIOREL_MCP=0`.
+
+### Verkehrsmeldungen in normalen MCP-Antworten
+
+`next_departures` und `search_ground` liefern `service_notices`, `notice_sources` und den geprüften Umfang mit der normalen Antwort. Hinweise werden auch bei leeren Abfahrtstafeln gesucht. DB-Hinweise bleiben erhalten; Transitous ergänzt zugeordnete Meldungen. Amtliche Änderungsfahrpläne können bereits aus dem Fahrplan entfernte Züge erklären. Deren Bahnhofsidentität wird gegen die EVA-Nummer geprüft, bevor wiederkehrende Ausfälle nach Datum, Uhrzeit und Verkehrsmittel zugeordnet werden.
+
+Die Zusatzprüfung verändert keine Verbindungen, Preise oder Rangfolge. Stationshinweise beweisen keine vollständige Betroffenheit einer Reise zum optionalen Ziel. Unbekannte Datumsregeln und weitere PDF-Meldungsarten bleiben als amtlicher Quellenlink sichtbar, ohne daraus einen Ausfall zu erfinden. Ersatzverkehr wird nur genannt, wenn die Quelle ihn tatsächlich liefert. Fehlende Meldungen oder ein Quellfehler bedeuten nicht störungsfreien Betrieb.
+
+Dokumente werden 30 Minuten, Transitous-Meldungen 60 Sekunden gecacht. HTTP-Größe, Laufzeit und PDF-Unterprozessressourcen sind begrenzt; der PDF-Pfad ist für die Linux-Container vorgesehen. `SERVICE_NOTICES_ENABLED=0` deaktiviert zusätzliche Quellen, erhält aber mitgelieferte DB-Hinweise. Die Quellenabdeckung ist regional unterschiedlich. Ein zusätzlicher direkter nationaler GTFS-RT-Import ist ohne passenden statischen ID-Index ausdrücklich nicht aktiviert; es gibt keine Zuordnung nur anhand einer Liniennummer.
 
 ## trvl ist optional
 
@@ -364,7 +373,7 @@ docker compose build
 docker compose up -d
 ```
 
-trvl ist über `TRVL_REF` und `TRVL_COMMIT` gepinnt; Traviorel verwendet standardmäßig `v1.27.0` (Commit `4f6b5da`). Zeigt der Tag nicht mehr auf diesen Commit, bricht der Build ab; beide Werte daher nur gemeinsam und nach Prüfung des neuen Upstream-Commits anheben.
+trvl ist über `TRVL_REF` und `TRVL_COMMIT` auf den geprüften Upstream-Commit `b20e2265a63a4d229abff7b20f5649f2e9f948dc` gepinnt. Das ist ein noch unveröffentlichter Stand nach v1.27.0; die Binary-Version lautet deshalb `1.27.0+git.b20e226`. `TRVL_VERSION` setzt diese Kennzeichnung. Referenz, Commit und Versionskennung nur gemeinsam nach Prüfung ändern. Der Build verweigert einen abweichenden Commit und verwendet das per Digest festgelegte Go 1.27.3. Die ausgewählten Upstream-Tests laufen beim vollständigen Build ohne Netzwerk; das Lite-Image enthält weiterhin kein trvl.
 
 ## Eindeutige Stationsauswahl
 
@@ -464,3 +473,7 @@ Traviorel wird unabhängig entwickelt und bleibt frei nutzbar. Für die Weiteren
 Wenn dir das Projekt hilft, unterstützt du damit die weitere Entwicklung.
 
 **[Traviorel unterstützen](https://tarnkappe.info/spenden/)**
+
+### Container-Kandidaten
+
+Branches unter `release/` veröffentlichen Kandidaten für Vollversion, Lite und DB-API mit Branch- und `sha-`-Tags (amd64/arm64). Beispiel: `release/0.3.4-candidate` ergibt `release-0.3.4-candidate`. Nur `main` aktualisiert `latest`; ein Kandidaten-Push erstellt keinen GitHub-Release.

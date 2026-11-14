@@ -138,3 +138,90 @@ def test_far_apart_or_explicit_mode_is_never_an_automatic_double_query():
     base = {"query": "Start Bahnhof", "auto_selection": rail, "stations": [rail, bus]}
     assert nearby_modal_options(base) == []
     assert nearby_modal_options(base | {"transport_mode": "bus"}) == []
+
+
+@pytest.mark.parametrize("place", ["Leipzig Engelsdorf", "Berlin Karow", "Dresden Niedersedlitz", "Hamburg Bergedorf"])
+def test_bus_at_exact_rail_station_name_resolves_bus_stop_without_model_ids(monkeypatch, place):
+    clock(monkeypatch)
+    rail = {"name": place, "provider": "db", "provider_id": "rail-id", "modes": ["SUBURBAN"]}
+    bus = {"name": "S-Bahnhof " + place, "provider": "db", "provider_id": "bus-id", "modes": ["BUS"]}
+    calls = []
+    async def stations(query, limit, transport_mode="all"):
+        calls.append((query, transport_mode))
+        if transport_mode == "all":
+            return {"query": query, "stations": [rail, bus], "auto_selection": None, "requires_selection": True}
+        if query == place + " Bahnhof":
+            return {"query": query, "stations": [bus], "auto_selection": bus}
+        return {"query": query, "stations": [bus], "auto_selection": None, "requires_selection": True}
+    async def fetch(payload):
+        assert payload["station_id"] == "bus-id"
+        assert payload["transport_mode"] == "bus"
+        return {"status": "ok", "departures": [{**row("West"), "product": "bus"}]}
+    monkeypatch.setattr(mcp, "search_stations", stations)
+    monkeypatch.setattr(mcp, "db_departures", fetch)
+    result = asyncio.run(mcp.next_departures(place, transport_mode="bus"))
+    assert not result.is_error
+    assert result.structured_content["departures"][0]["product"] == "bus"
+    assert calls == [(place, "bus"), (place, "all"), (place + " Bahnhof", "bus")]
+
+
+def test_duplicate_region_label_is_a_safe_exact_station_alias(monkeypatch):
+    clock(monkeypatch)
+    rail = {"name": "Musterstadt West", "provider": "db", "provider_id": "rail-id", "modes": ["SUBURBAN"]}
+    async def stations(*args, **kwargs):
+        return {"stations": [rail], "auto_selection": None, "requires_selection": True}
+    async def fetch(payload):
+        assert payload["station_id"] == "rail-id"
+        return {"status": "empty", "departures": []}
+    monkeypatch.setattr(mcp, "search_stations", stations)
+    monkeypatch.setattr(mcp, "db_departures", fetch)
+    result = asyncio.run(mcp.next_departures("Musterstadt West, Musterstadt", transport_mode="suburban"))
+    assert result.structured_content["status"] == "empty"
+
+
+def test_same_named_distant_stations_still_require_selection(monkeypatch):
+    clock(monkeypatch)
+    rows = [{"name": "Musterstadt West", "provider": "db", "provider_id": code, "modes": ["SUBURBAN"]}
+            for code in ["north", "south"]]
+    async def stations(*args, **kwargs):
+        return {"stations": rows, "auto_selection": None, "requires_selection": True}
+    async def forbidden(payload):
+        raise AssertionError("Ambiguous alias reached departures")
+    monkeypatch.setattr(mcp, "search_stations", stations)
+    monkeypatch.setattr(mcp, "db_departures", forbidden)
+    result = asyncio.run(mcp.next_departures("Musterstadt West", transport_mode="suburban"))
+    assert result.structured_content["status"] == "needs_selection"
+
+
+def test_public_departure_tool_keeps_provider_id_choice_server_side():
+    tools = asyncio.run(mcp.mcp.list_tools())
+    board = next(tool for tool in tools if tool.name == "next_departures")
+    properties = board.input_schema["properties"]
+    assert "transport_mode" in properties
+    assert "origin_station" not in properties
+    assert "destination_station" not in properties
+
+
+def test_overlap_uses_consistent_provider_coordinates_not_one_stale_source():
+    from reisevergleich.station_catalog import nearby_modal_options
+    rail = {"name": "Musterstadt West", "provider_id": "rail", "modes": ["SUBURBAN"],
+            "latitude": 51.0, "longitude": 12.0,
+            "provider_locations": {"db": {"latitude": 51.0, "longitude": 12.0},
+                                   "transitous": {"latitude": 51.0, "longitude": 12.01}}}
+    bus = {"name": "S-Bahnhof West, Musterstadt", "provider_id": "bus", "modes": ["BUS"],
+           "latitude": 51.0, "longitude": 12.011,
+           "provider_locations": {"db": {"latitude": 51.0, "longitude": 12.011},
+                                  "transitous": {"latitude": 51.0, "longitude": 12.011}}}
+    result = {"query": "Musterstadt West", "stations": [rail, bus]}
+    assert [mode for mode, _ in nearby_modal_options(result)] == ["bus", "local_train"]
+
+
+def test_unrelated_provider_coordinates_cannot_establish_an_overlap():
+    from reisevergleich.station_catalog import nearby_modal_options
+    rail = {"name": "Musterstadt West", "provider_id": "rail", "modes": ["SUBURBAN"],
+            "latitude": 51.0, "longitude": 12.0,
+            "provider_locations": {"db": {"latitude": 51.0, "longitude": 12.0}}}
+    bus = {"name": "S-Bahnhof West, Musterstadt", "provider_id": "bus", "modes": ["BUS"],
+           "latitude": 52.0, "longitude": 12.0,
+           "provider_locations": {"transitous": {"latitude": 51.0, "longitude": 12.0001}}}
+    assert nearby_modal_options({"query": "Musterstadt West", "stations": [rail, bus]}) == []

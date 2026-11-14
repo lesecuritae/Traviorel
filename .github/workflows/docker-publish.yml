@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - "release/**"
     tags:
       - "v*.*.*"
 
@@ -25,13 +26,13 @@ jobs:
             image: lesecuritae/traviorel-app
             context: ./tool
             dockerfile: ./tool/Dockerfile
-            build_args: TRVL_REF=v1.27.0
+            build_args: TRVL_REF=b20e2265a63a4d229abff7b20f5649f2e9f948dc
           - service: app-lite
             image: lesecuritae/traviorel-app-lite
             context: ./tool
             dockerfile: ./tool/Dockerfile
             build_args: |
-              TRVL_REF=v1.27.0
+              TRVL_REF=b20e2265a63a4d229abff7b20f5649f2e9f948dc
               WITH_TRVL=0
           - service: db-api
             image: lesecuritae/traviorel-db-api
@@ -61,7 +62,10 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ matrix.image }}
+          # Candidate branches must never add an implicit latest tag.
+          flavor: latest=false
           tags: |
+            type=ref,event=branch,enable=${{ startsWith(github.ref, 'refs/heads/release/') }}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=semver,pattern={{version}}
             type=sha,prefix=sha-

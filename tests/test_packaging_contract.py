@@ -84,3 +84,10 @@ for forbidden in ("192.168.", "10.0.", "tailscale", "CHANGE_ME="):
     assert forbidden not in compose
 
 print("GitHub-Paketvertrag, sichere Defaults und Lizenzhinweise: OK")
+
+# Registry publication must keep candidate tags away from the stable installation default.
+publish = (root / ".github/workflows/docker-publish.yml").read_text()
+assert '- "release/**"' in publish
+assert "flavor: latest=false" in publish
+assert "type=ref,event=branch,enable=${{ startsWith(github.ref, 'refs/heads/release/') }}" in publish
+assert "type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}" in publish

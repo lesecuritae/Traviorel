@@ -22,7 +22,7 @@ python3 tests/test_source_clean.py
 say "Logik- und Vertragsprüfungen"
 if python3 -c "import fastapi, httpx, pydantic, uvicorn, curl_cffi" 2>/dev/null; then
   # Kein Index-Aufbau aus dem Netz und keine Preise im Datenordner; die Tests dafür schalten beides selbst ein.
-  export DELAY_INDEX=0 PRICE_HISTORY=0
+  export DELAY_INDEX=0 PRICE_HISTORY=0 SERVICE_NOTICES_ENABLED=0
   for test in tests/test_*.py; do
     echo "--- $(basename "$test")"
     python3 "$test"

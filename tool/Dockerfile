@@ -1,14 +1,15 @@
 # Go läuft immer auf der Build-Maschine und baut für die Zielarchitektur: keine Emulation, kein 15-Minuten-arm64-Build.
-FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS trvl-builder
+FROM --platform=$BUILDPLATFORM golang:1.27.3-bookworm@sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0 AS trvl-builder
 ARG TARGETOS=linux
 ARG TARGETARCH
-ARG TRVL_REF=v1.27.0
-# Tags are mutable. The build must land on this exact commit or fail; bump both together
-# after reviewing the new upstream commit.
-ARG TRVL_COMMIT=4f6b5da14874b34260bdfa2c114fb9b4800223c6
+ARG TRVL_REF=b20e2265a63a4d229abff7b20f5649f2e9f948dc
+ARG TRVL_VERSION=1.27.0+git.b20e226
+# Tags are mutable; a tag or full commit must resolve to the reviewed commit.
+# The version suffix identifies this unreleased snapshot without inventing a release.
+ARG TRVL_COMMIT=b20e2265a63a4d229abff7b20f5649f2e9f948dc
 # WITH_TRVL=0 baut ein Image ohne trvl (und ohne dessen Noncommercial-Lizenz); Traviorel läuft dann mit den Direktwegen.
 ARG WITH_TRVL=1
-RUN case "$TRVL_REF" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "TRVL_REF must be a version tag such as v1.24.0" >&2; exit 2 ;; esac \
+RUN printf '%s' "$TRVL_REF" | grep -Eq '^(v[0-9]+\.[0-9]+\.[0-9]+|[0-9a-f]{40})$' \
     && if [ "$WITH_TRVL" = "1" ]; then printf '%s' "$TRVL_COMMIT" | grep -Eq '^[0-9a-f]{40}$' || { echo "TRVL_COMMIT must be a full 40-character commit hash" >&2; exit 2; }; fi
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
@@ -17,15 +18,22 @@ WORKDIR /src
 RUN if [ "$WITH_TRVL" = "1" ]; then git init trvl \
     && cd trvl \
     && git remote add origin https://github.com/MikkoParkkola/trvl.git \
-    && git fetch --depth 1 origin "refs/tags/${TRVL_REF}:refs/tags/${TRVL_REF}" \
-    && git checkout --detach "refs/tags/${TRVL_REF}" \
+    && git fetch --depth 1 origin "$TRVL_REF" \
+    && git checkout --detach FETCH_HEAD \
     && actual="$(git rev-parse HEAD)" \
     && if [ "$actual" != "$TRVL_COMMIT" ]; then echo "trvl ${TRVL_REF} resolved to ${actual}, expected ${TRVL_COMMIT}" >&2; exit 3; fi \
     && echo "$actual" > /tmp/TRVL_COMMIT; \
     else mkdir -p trvl/internal/models && : > trvl/internal/models/airports.go \
     && echo "trvl is not part of this image" > trvl/LICENSE && echo none > /tmp/TRVL_COMMIT; fi
 WORKDIR /src/trvl
-RUN if [ "$WITH_TRVL" = "1" ]; then TRVL_VERSION="${TRVL_REF#v}" && GOOS="${TARGETOS}" GOARCH="${TARGETARCH:-$(go env GOARCH)}" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.Version=${TRVL_VERSION}" -o /out/trvl ./cmd/trvl \
+RUN if [ "$WITH_TRVL" = "1" ]; then GOTOOLCHAIN=local go mod download; fi
+# Upstream regressions run without provider/network access or operator credentials.
+# Fake-browser tests still resolve example.com through the real safety guard.
+# This public-address fixture exists only in this network-disabled build step;
+# neither the runtime image nor the host DNS configuration receives it.
+RUN --network=none --mount=type=bind,source=trvl-test-hosts,target=/etc/hosts \
+    if [ "$WITH_TRVL" = "1" ]; then GOTOOLCHAIN=local GOMAXPROCS=2 GOMEMLIMIT=2GiB go test -p=1 -count=1 -timeout=180s ./internal/flights/afklm ./internal/flights ./internal/hotels ./internal/providers ./internal/ground; fi
+RUN --network=none if [ "$WITH_TRVL" = "1" ]; then export TRVL_NO_TELEMETRY=1 TRVL_DISABLE_UPDATE_CHECK=1; GOOS="${TARGETOS}" GOARCH="${TARGETARCH:-$(go env GOARCH)}" CGO_ENABLED=0 GOTOOLCHAIN=local go build -trimpath -ldflags "-s -w -X main.Version=${TRVL_VERSION}" -o /out/trvl ./cmd/trvl \
     && if [ "${TARGETARCH:-$(go env GOARCH)}" = "$(go env GOARCH)" ]; then /out/trvl version | grep -F "trvl ${TRVL_VERSION}" >/dev/null && /out/trvl hotels --help | grep -F -- "--enrich-rooms" >/dev/null && /out/trvl hotels --help | grep -F -- "--checkin" >/dev/null && /out/trvl flights --help | grep -F -- "--provider" >/dev/null && /out/trvl flights --help | grep -F -- "--return" >/dev/null && /out/trvl ground --help | grep -F -- "--provider" >/dev/null && /out/trvl airport-transfer --help | grep -F -- "--arrival-after" >/dev/null && /out/trvl route --help | grep -F -- "--arrive-by" >/dev/null; fi \
     && cp /tmp/TRVL_COMMIT /out/TRVL_COMMIT && echo "${TRVL_REF}" > /out/TRVL_REF; \
     else mkdir -p /out && printf '#!/bin/sh\nexit 127\n' > /out/trvl && chmod +x /out/trvl \

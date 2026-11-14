@@ -8,7 +8,7 @@
 
 Rail, the Deutschlandticket, split tickets, FlixTrain, FlixBus, flights, airport feeders, transfers, and accommodation are combined into a single itinerary. Traviorel does not merely look for a low price somewhere. Every part of the journey must fit together both chronologically and logically.
 
-Current version: **0.3.3**
+Current version: **0.3.4**
 
 Traviorel does not sell or book anything itself. If a provider supplies a usable offer link, it can be opened directly from the result. Where no direct link is available, Traviorel offers a suitable manual cross-check, for example with Deutsche Bahn, Google Flights, Google Hotels, or Google Maps. Price and availability must always be verified with the actual provider.
 
@@ -98,7 +98,7 @@ Traviorel serves Streamable HTTP MCP at `/mcp`. It provides travel search, live 
 
 `next_departures` needs only `origin` and returns departures in all directions. An optional `destination` filters by actual journey routing, rather than assuming that a train's final destination names every intermediate stop. Responses distinguish scheduled and expected times, direction, platforms and cancellations.
 
-Transport selection is per request: `bus`, `suburban` (S-Bahn), `local_train` (S-Bahn/RB/RE), or unrestricted `all`. Without a selection, a clearly co-located bus/rail pair within 300 m is queried separately for both; other ambiguous places require a choice. `find_station` supplies reusable `selection` objects. `deutschlandticket_only` excludes long-distance product categories, but a departure board does not establish individual fare exceptions.
+Transport selection is per request: `bus`, `suburban` (S-Bahn), `local_train` (S-Bahn/RB/RE), or unrestricted `all`. Without a selection, a clearly co-located bus/rail pair within 300 m is queried separately for both; other ambiguous places require a choice. The departure board resolves stop IDs on the server for the requested mode. Names, word order and repeated city labels are matched against source data without a city-specific mapping. Genuine ambiguity still requires a choice. `find_station` supplies reusable `selection` objects for `search_ground`. `deutschlandticket_only` excludes long-distance product categories, but a departure board does not establish individual fare exceptions.
 
 Example tool arguments for a voice assistant, with no fixed city:
 
@@ -107,6 +107,16 @@ Example tool arguments for a voice assistant, with no fixed city:
 ```
 
 In Open WebUI, add a Streamable HTTP MCP connection under Admin Settings → Integrations. Use `http://traviorel-app:8000/mcp` when both services share a Docker network, or `https://<your-server>/mcp` when accessing Traviorel through its public HTTPS host. Select “Traviorel” in the chat tools to show its results in the chat. Set `TRAVIOREL_MCP=0` to disable the endpoint.
+
+`search_hotels` searches accommodation without planning flights. Confirmed stay totals and nightly-only prices remain separate; a source failure is not reported as proof that no rooms exist.
+
+### Service notices in normal MCP responses
+
+`next_departures` and `search_ground` include `service_notices`, `notice_sources` and the checked scope in the ordinary response, even when no departures were returned. DB remarks are retained, Transitous contributes attached alerts, and official station change documents can explain trains already removed from the timetable. A document's station identity must match the selected EVA identifier before recurring cancellations are matched by date, time and transport mode.
+
+Enrichment never changes journeys, prices or ranking. A station notice is not proof that the entire route to an optional destination is affected. Unknown date rules and other PDF notice types remain available through the official document link without inventing cancellations. Replacement transport is reported only when actually supplied. Missing alerts and failed sources do not establish normal service.
+
+Documents are cached for 30 minutes and Transitous alerts for 60 seconds. HTTP sizes, execution time and PDF subprocess resources are bounded; the PDF path targets Linux containers. `SERVICE_NOTICES_ENABLED=0` disables supplementary sources while retaining DB remarks. Regional coverage varies. Direct national GTFS-RT ingestion is deliberately not enabled without its matching static identifier index; line names alone are never used for cross-feed identity.
 
 ## Why trvl is included
 
@@ -340,7 +350,7 @@ docker compose build
 docker compose up -d
 ```
 
-trvl is pinned through `TRVL_REF` and `TRVL_COMMIT`; Traviorel uses `v1.27.0` (commit `4f6b5da`) by default. The build fails if the tag no longer resolves to that commit, so bump both together after reviewing the new upstream commit.
+trvl is pinned through `TRVL_REF` and `TRVL_COMMIT` to reviewed upstream commit `b20e2265a63a4d229abff7b20f5649f2e9f948dc`. This is an unreleased snapshot after v1.27.0, identified as `1.27.0+git.b20e226` through `TRVL_VERSION`. Change the reference, expected commit and version together after review. A mismatched commit fails the build. The Go 1.27.3 builder is digest-pinned; selected upstream tests run without network access during the full build. The Lite image still excludes trvl.
 
 ## Unambiguous station selection
 
@@ -460,3 +470,7 @@ Traviorel is developed independently and remains free to use. Donations are nece
 If the project helps you, your support helps fund its continued development.
 
 **[Support Traviorel](https://tarnkappe.info/spenden/)**
+
+### Container candidates
+
+Branches under `release/` publish full, Lite and DB-API candidates with branch and `sha-` tags (amd64/arm64). For example, `release/0.3.4-candidate` produces `release-0.3.4-candidate`. Only `main` updates `latest`; a candidate push does not create a GitHub release.

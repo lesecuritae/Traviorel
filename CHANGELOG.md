@@ -1,4 +1,10 @@
 # Changelog
+## 0.3.4 - 2026-11-13
+
+- trvl auf geprüften Commit `b20e226` nach v1.27.0 angehoben: korrigierter Air-France/KLM-Gesamtpreis für Hin-/Rückflüge, Wizz-Air-API 29.24.0 und aktuelle TLS-/Browser-Abhängigkeiten. Der Stand wird ausdrücklich als `1.27.0+git.b20e226` ausgewiesen, nicht als erfundener stabiler Release.
+- Go-Builder auf verifiziertes Go 1.27.3 mit festem Image-Digest umgestellt. Upstream-Regressionsprüfungen für Flugpreise, Hotels, Provider und Bodenverkehr laufen im Build ohne Netzwerk.
+- Zusätzliche Integrationsfixtures prüfen den korrigierten Flug-Gesamtpreis sowie die Trennung von Hotel-Nachtpreis, belegtem Aufenthaltspreis und unbestätigtem Preis. Keine neue Hotel-Funktion aus unveränderten Upstream-Dateien abgeleitet.
+
 ## 0.3.3 - 2026-11-13
 
 - MCP: aktuelle Serverzeit, „heute“ und relative Abfahrtszeiten, Abfahrtstafel ohne Ziel mit allen Richtungen sowie optionalem Ziel, typisierte Verkehrsmittelauswahl und getrennte Bus-/Bahn-Auskunft bei klarer Überschneidung. Vergangene Daten und widersprüchliche Haltestellen führen zu verständlichen Eingabefehlern.
