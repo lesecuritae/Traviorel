@@ -470,3 +470,7 @@ Traviorel is developed independently and remains free to use. Donations are nece
 If the project helps you, your support helps fund its continued development.
 
 **[Support Traviorel](https://tarnkappe.info/spenden/)**
+
+### Container candidates
+
+Branches under `release/` publish full, Lite and DB-API candidates with branch and `sha-` tags (amd64/arm64). For example, `release/0.3.4-candidate` produces `release-0.3.4-candidate`. Only `main` updates `latest`; a candidate push does not create a GitHub release.

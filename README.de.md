@@ -473,3 +473,7 @@ Traviorel wird unabhängig entwickelt und bleibt frei nutzbar. Für die Weiteren
 Wenn dir das Projekt hilft, unterstützt du damit die weitere Entwicklung.
 
 **[Traviorel unterstützen](https://tarnkappe.info/spenden/)**
+
+### Container-Kandidaten
+
+Branches unter `release/` veröffentlichen Kandidaten für Vollversion, Lite und DB-API mit Branch- und `sha-`-Tags (amd64/arm64). Beispiel: `release/0.3.4-candidate` ergibt `release-0.3.4-candidate`. Nur `main` aktualisiert `latest`; ein Kandidaten-Push erstellt keinen GitHub-Release.
