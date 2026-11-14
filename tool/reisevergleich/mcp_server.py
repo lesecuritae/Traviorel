@@ -756,13 +756,18 @@ async def next_departures(
     if result.get("status") == "failed":
         return CallToolResult(is_error=True, content=[TextContent(type="text", text="Die DB-Abfahrtsquelle hat die Anfrage nicht erfolgreich beantwortet.\n" + "\n".join(render_notice_lines(notice_info)))],
                               structured_content={"error": {"code": "SOURCE_UNAVAILABLE"}, "attempts": result.get("attempts"), **notice_info})
+    future_timetable = when.date() > now.date()
+    if future_timetable:
+        # Provider fallback times/zero delay do not establish future punctuality.
+        result = {**result, "departures": [{**row, "time_basis": "published_timetable"} for row in result["departures"]],
+                  "timing_note": "Fahrplanzeiten für einen zukünftigen Tag; keine bestätigte Pünktlichkeitsprognose."}
     rows = result["departures"]
     lines = [f"Abfahrten ab {selected.name}, ab {when.isoformat(timespec='minutes')} ({TZ})"
              + (f" Richtung/über {target.name}:" if target else " – alle Richtungen:")]
     labels = {"bus": "Bus", "suburban": "S-Bahn", "regional": "Regionalzug", "regionalExpress": "Regionalexpress", "tram": "Straßenbahn"}
     lines.extend(f"- {row.get('line') or 'Linie unbekannt'} ({labels.get(row.get('product'), 'Verkehrsmittel nicht eingeordnet')}) "
                  f"ab {row.get('station') or selected.name} → {row.get('direction') or 'Richtung unbekannt'}: "
-                 f"Plan {_hm(row.get('planned_departure'))}, erwartet {_hm(row.get('expected_departure'))}"
+                 + (f"Fahrplan {_hm(row.get('planned_departure'))}" if future_timetable else f"Plan {_hm(row.get('planned_departure'))}, gemeldete Erwartung {_hm(row.get('expected_departure'))}")
                  + (f", Gleis/Steig {row['platform']}" if row.get('platform') else "") for row in rows)
     if not rows:
         lines.append("Keine passenden Abfahrten im abgefragten Zeitraum gemeldet.")
@@ -770,6 +775,8 @@ async def next_departures(
         lines.append(f"{len(result['cancelled_departures'])} gemeldete Ausfälle sind separat in cancelled_departures enthalten.")
     if result.get("related_departures"):
         lines.append("Weitere Abfahrten an anderen Haltestellen wurden getrennt in related_departures abgelegt; sie gelten nicht als Abfahrten am gewählten Halt.")
+    if future_timetable:
+        lines.append(result["timing_note"])
     lines.extend(render_notice_lines(notice_info))
     return _text("\n".join(lines), {**result, **notice_info, "server_time": _clock_info(now), "requested_from": when.isoformat()})
 

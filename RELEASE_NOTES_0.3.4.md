@@ -28,7 +28,7 @@
 
 ## Validation
 
-Python 3.13: check.sh passed and 206 pytest tests passed, with 0 failures / 0 skips. All five selected upstream Go packages and the full/Lite/DB-API image builds passed. Offline fixtures are not proof that every live provider is available.
+Python 3.13: check.sh passed and 207 pytest tests passed, with 0 failures / 0 skips. All five selected upstream Go packages and the full/Lite/DB-API image builds passed. Offline fixtures are not proof that every live provider is available.
 
 Isolated live MCP and Lite checks passed. Both the normal hotel path and a fresh forced-trvl control returned 3 hotels with verified stay totals. One earlier forced-trvl attempt timed out; the old/new controls completed in 26.8s/29.0s. Intermittent Google throttling and unavailable browser-dependent Booking coverage remain explicit limits. No claim of complete live-provider availability is made.
 

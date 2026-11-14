@@ -182,3 +182,17 @@ def test_cross_midnight_message_keeps_calendar_date():
     page=PAGE.replace('09:10 09:40','00:10')
     rows=notices.parse_change_pages([page],when,when+timedelta(hours=2),'suburban')
     assert rows[0]['affected_departure_times']==['2030-11-17T00:10:00+01:00']
+
+
+def test_future_board_does_not_describe_provider_fallback_time_as_confirmed_punctuality(monkeypatch):
+    from reisevergleich import mcp_server as mcp
+    monkeypatch.setenv('SERVICE_NOTICES_ENABLED','0')
+    monkeypatch.setattr(mcp,'_server_now',lambda:WHEN)
+    async def fetch(payload):
+        return {'status':'ok','departures':[{'line':'S1','planned_departure':'2030-11-17T09:10:00+01:00',
+                 'expected_departure':'2030-11-17T09:10:00+01:00','delay_minutes':0}]}
+    monkeypatch.setattr(mcp,'db_departures',fetch)
+    result=asyncio.run(mcp.next_departures(STATION.name,departure_in_minutes=1440,origin_station=STATION,transport_mode='suburban'))
+    assert result.structured_content['departures'][0]['time_basis']=='published_timetable'
+    assert 'keine bestätigte Pünktlichkeitsprognose' in result.content[0].text
+    assert 'gemeldete Erwartung' not in result.content[0].text
