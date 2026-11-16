@@ -165,11 +165,14 @@ def route_overview(origin: str, destination: str, kind: str = "ground") -> dict[
 
 def add_watch(origin: str, destination: str) -> dict[str, Any]:
     with _lock, _connect() as db:
-        if db.execute("SELECT COUNT(*) FROM watches").fetchone()[0] >= MAX_WATCHES:
+        # SQLite's lower() only folds ASCII, so "Gießen" or "Österreich" never matched their own key.
+        wanted = (_key(origin), _key(destination))
+        rows = db.execute("SELECT id, origin, destination FROM watches").fetchall()
+        for watch_id, known_origin, known_destination in rows:
+            if (_key(known_origin), _key(known_destination)) == wanted:
+                return {"id": watch_id, "origin": known_origin, "destination": known_destination}
+        if len(rows) >= MAX_WATCHES:
             raise ValueError(f"Es sind höchstens {MAX_WATCHES} Strecken möglich. Bitte erst eine entfernen.")
-        existing = db.execute("SELECT id FROM watches WHERE lower(origin) = ? AND lower(destination) = ?", (_key(origin), _key(destination))).fetchone()
-        if existing:
-            return {"id": existing[0], "origin": origin, "destination": destination}
         cursor = db.execute("INSERT INTO watches(origin, destination, created) VALUES (?, ?, ?)", (origin.strip(), destination.strip(), _today()))
         return {"id": cursor.lastrowid, "origin": origin.strip(), "destination": destination.strip()}
 

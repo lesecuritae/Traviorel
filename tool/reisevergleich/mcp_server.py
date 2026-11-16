@@ -65,6 +65,8 @@ def _remember(connections: list[dict[str, Any]]) -> list[str]:
     for key in [k for k, (stamp, _) in _refs.items() if now - stamp > REF_TTL_SECONDS]:
         _refs.pop(key, None)
     tag = secrets.token_hex(2)
+    while any(key.startswith(f"{tag}-") for key in _refs):  # a reused tag would hand out another search's connection
+        tag = secrets.token_hex(2)
     refs = []
     for index, connection in enumerate(connections):
         ref = f"{tag}-{index + 1}"
@@ -347,11 +349,14 @@ async def plan_flight_trip(
         nonstop_only: Nur Direktflüge.
         hotel_min_stars: Mindestens so viele Sterne.
     """
-    request = TripRequest(
-        travel_mode="flight", journey_type="round_trip" if nights > 0 else "one_way", origin=origin, destination=destination,
-        departure_date=departure_date, duration_value=nights, duration_unit="nights", adults=adults,
-        include_hotel=hotel and nights > 0, stops="nonstop" if nonstop_only else "any", hotel_min_stars=hotel_min_stars,
-    )
+    try:
+        request = TripRequest(
+            travel_mode="flight", journey_type="round_trip" if nights > 0 else "one_way", origin=origin, destination=destination,
+            departure_date=departure_date, duration_value=nights, duration_unit="nights", adults=adults,
+            include_hotel=hotel and nights > 0, stops="nonstop" if nonstop_only else "any", hotel_min_stars=hotel_min_stars,
+        )
+    except (ValidationError, TypeError) as exc:
+        return _search_input_error(_validation_fields(exc), _server_now())
     result = await search(request)
     context = result.get("response_context") or {}
     route = context.get("route") or {}
@@ -387,10 +392,13 @@ async def price_calendar_search(origin: str, destination: str, date: str, days: 
         days: Anzahl Tage (1 bis 14).
         deutschlandticket: Ein Deutschlandticket ist vorhanden.
     """
-    request = PriceCalendarRequest(
-        travel_mode="ground", journey_type="one_way", origin=origin, destination=destination, departure_date=date,
-        calendar_days=max(1, min(int(days), 14)), deutschlandticket=deutschlandticket, include_hotel=False, include_feeder=False,
-    )
+    try:
+        request = PriceCalendarRequest(
+            travel_mode="ground", journey_type="one_way", origin=origin, destination=destination, departure_date=date,
+            calendar_days=max(1, min(int(days), 14)), deutschlandticket=deutschlandticket, include_hotel=False, include_feeder=False,
+        )
+    except (ValidationError, TypeError, ValueError) as exc:
+        return _search_input_error(_validation_fields(exc, rename={"departure_date": "date"}), _server_now())
     result = await price_calendar(request)
     rows = [row for row in result.get("days") or [] if isinstance(row, dict)]
     cheapest = result.get("cheapest_date")
@@ -403,6 +411,33 @@ async def price_calendar_search(origin: str, destination: str, date: str, days: 
     return _text("\n".join(lines), {"cheapest_date": cheapest, "days": rows})
 
 
+def _validation_fields(exc: Exception, rename: dict[str, str] | None = None) -> list[dict[str, str]]:
+    if not isinstance(exc, ValidationError):
+        return [{"field": "request", "message": str(exc) or type(exc).__name__}]
+    fields = [{"field": ".".join(str(v) for v in e["loc"]) or "request", "message": e["msg"]}
+              for e in exc.errors(include_url=False, include_context=False, include_input=False)]
+    for field in fields:
+        field["field"] = (rename or {}).get(field["field"], field["field"])
+    return fields
+
+
+def _live_window(departure: str, now: datetime) -> tuple[str, str]:
+    """Suchfenster 20 Minuten vor der Abfahrt, mit dem dazu passenden Tag.
+
+    Früher blieb das Datum beim Abfahrtstag: eine Abfahrt um 00:10 wurde ab 23:50 desselben Tages gesucht, also fast einen
+    Tag zu spät. Liegt der Fensterbeginn vor heute (laufende Fahrt nach Mitternacht), beginnt die Suche heute um 00:00.
+    """
+    try:
+        parsed = datetime.fromisoformat(departure)
+    except ValueError:
+        return departure[:10], "00:00"
+    local = parsed.astimezone(TZ) if parsed.tzinfo else parsed
+    start = local - timedelta(minutes=20)
+    if start.date() < now.date() <= local.date():
+        return now.date().isoformat(), "00:00"
+    return start.date().isoformat(), start.strftime("%H:%M")
+
+
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
 async def live_delays(ref: str) -> CallToolResult:
     """Aktuelle Verspätungen einer Bahnverbindung: je Zug Abfahrt und Ankunft (Plan und erwartet), Ausfall und Gleis. Fragt die Deutsche Bahn frisch ab;
@@ -413,14 +448,14 @@ async def live_delays(ref: str) -> CallToolResult:
     """
     connection = _connection(ref)
     departure = str(connection.get("departure") or "")
-    try:  # etwas früher ansetzen, damit die Fahrt sicher im Suchfenster liegt
-        window_start = (datetime.fromisoformat(departure) - timedelta(minutes=20)).strftime("%H:%M")
-    except ValueError:
-        window_start = "00:00"
-    request = TripRequest(
-        travel_mode="ground", journey_type="one_way", origin=str(connection.get("origin") or ""), destination=str(connection.get("destination") or ""),
-        departure_date=departure[:10], departure_after=window_start, include_hotel=False, include_feeder=False, refresh_cache=True,
-    )
+    window_date, window_start = _live_window(departure, _server_now())
+    try:
+        request = TripRequest(
+            travel_mode="ground", journey_type="one_way", origin=str(connection.get("origin") or ""), destination=str(connection.get("destination") or ""),
+            departure_date=window_date, departure_after=window_start, include_hotel=False, include_feeder=False, refresh_cache=True,
+        )
+    except ValidationError:
+        return _text("Diese Verbindung finde ich gerade nicht mehr bei der Bahn (Fahrt vorbei oder geändert). Bitte neu suchen.", {"legs": []})
     fresh = [c for c in _find_connections(await search(request)) if c.get("provider") == connection.get("provider")]
     numbers = [str(leg.get("train_number")) for leg in connection.get("legs") or [] if isinstance(leg, dict) and leg.get("train_number")]
     match = next((c for c in fresh if [str(leg.get("train_number")) for leg in c.get("legs") or [] if isinstance(leg, dict) and leg.get("train_number")] == numbers and c.get("departure") == connection.get("departure")), None)
