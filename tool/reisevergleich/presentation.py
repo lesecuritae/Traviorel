@@ -258,7 +258,10 @@ def _flight(option: Any, *, manual_url: str | None = None) -> dict[str, Any] | N
         "booking_status": "not_booked",
         "price": {
             "value": price,
-            "currency": option.get("currency") or "EUR",
+            # Nicht stillschweigend auf EUR ausweichen: planner._candidate_totals markiert eine
+            # fehlende Währung bereits als flight_currency_unknown in missing_components; eine
+            # erfundene "EUR"-Angabe hier würde dem widersprechen.
+            "currency": option.get("currency") or None,
             "scope": "round_trip",
         } if price > 0 else None,
         "offer_url": offer_url,
@@ -468,10 +471,15 @@ def _trip_context(result: dict[str, Any]) -> dict[str, Any]:
     # selected_flight im Paket-Slot fehlt, darf die öffentliche Ausgabe trotzdem
     # nicht zu einem leeren Flug werden. Nur einen vollständig passenden
     # Hin-/Rückflug als Fallback übernehmen.
+    original_selected_flight = selected_flight
     if not _route_complete(selected_flight):
         selected_flight = next(
             (item for item in (selected.get("flight_options") or []) if _route_complete(item)),
-            {},
+            # Kein exakt passender Flug (z.B. Stadt-/Metro-Code statt konkretem Flughafen beim
+            # Anbieter): lieber den ursprünglich ausgewählten Flug zeigen, dessen Preis
+            # cost_summary bereits einrechnet, statt einen leeren Flug bei weiterhin gezähltem
+            # Preis auszugeben.
+            original_selected_flight,
         )
 
     outbound_flight = selected_flight.get("outbound") if isinstance(selected_flight.get("outbound"), dict) else {}
@@ -608,6 +616,8 @@ def public_result(result: dict[str, Any]) -> dict[str, Any]:
         base["response_context"] = _ground_trip_context(result)
         if result.get("error"):
             base["error"] = result.get("error")
+        if result.get("missing_fields"):
+            base["missing_fields"] = result.get("missing_fields")
         return _clean(base)
 
     if result.get("search_mode") == "trip_plan":
@@ -616,6 +626,8 @@ def public_result(result: dict[str, Any]) -> dict[str, Any]:
             base["clarification"] = result.get("clarification")
         if result.get("error"):
             base["error"] = result.get("error")
+        if result.get("missing_fields"):
+            base["missing_fields"] = result.get("missing_fields")
         return _clean(base)
 
     context: dict[str, Any] = {

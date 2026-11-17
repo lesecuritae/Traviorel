@@ -103,6 +103,16 @@ def _euro(value: Any) -> str:
         return "Preis offen"
 
 
+def _amount(value: Any, currency: str | None) -> str:
+    """Wie _euro, aber nimmt eine fehlende Währung nicht stillschweigend als EUR an."""
+    if currency == "EUR":
+        return _euro(value)
+    try:
+        return f"{float(value):.2f} {currency or 'Währung unbekannt'}"
+    except (TypeError, ValueError):
+        return "Preis offen"
+
+
 def _duration(minutes: Any) -> str:
     try:
         total = int(minutes)
@@ -248,6 +258,10 @@ async def search_ground(
             include_hotel=False, include_feeder=False,
             origin_station=origin_station, destination_station=destination_station,
             transport_mode=transport_mode,
+            # Without these the backend always selected/cut by its own defaults and prefer/limit
+            # only re-sorted and truncated whatever came back - cheaper connections the default
+            # ranking had already dropped never reached this tool at all.
+            feeder_preference=prefer, max_results=max(1, min(int(limit), 20)),
         )
     except ValidationError as exc:
         return _search_input_error(_validation_fields(exc, rename={"departure_date": "date"}), now)
@@ -360,12 +374,18 @@ async def plan_flight_trip(
     price = flight.get("price") or {}
     if price.get("value") is not None:
         out = flight.get("outbound") or {}
-        lines.append(f"Flug: {_euro(price['value'])} ({flight.get('provider', '')}), Hinflug {_hm(out.get('departure'))} → {_hm(out.get('arrival'))}, {out.get('stops', 0)} Zwischenstopps. {flight.get('offer_url', '')}")
+        lines.append(f"Flug: {_amount(price['value'], price.get('currency'))} ({flight.get('provider', '')}), Hinflug {_hm(out.get('departure'))} → {_hm(out.get('arrival'))}, {out.get('stops', 0)} Zwischenstopps. {flight.get('offer_url', '')}")
     else:
         lines.append("Flug: kein Preis gefunden.")
     for option in ((context.get("hotel") or {}).get("options") or [])[:3]:
-        hotel_price = (option.get("price") or {}).get("value")
-        lines.append(f"Hotel: {option.get('name')} ({option.get('stars', '?')}★, Bewertung {option.get('rating', '?')}) {_euro(hotel_price)} gesamt")
+        hotel_price = option.get("price") or {}
+        if hotel_price.get("value") is None:
+            price_label = "Preis offen"
+        elif hotel_price.get("basis") == "verified_total_stay":
+            price_label = f"{_amount(hotel_price['value'], hotel_price.get('currency'))} gesamt"
+        else:
+            price_label = f"{_amount(hotel_price['value'], hotel_price.get('currency'))} pro Nacht, Gesamtpreis nicht bestätigt"
+        lines.append(f"Hotel: {option.get('name')} ({option.get('stars', '?')}★, Bewertung {option.get('rating', '?')}) {price_label}")
     cost = context.get("cost_summary") or {}
     if cost:
         total = cost.get("verified_total") if cost.get("verified_total") is not None else cost.get("known_subtotal")
@@ -472,6 +492,10 @@ async def live_delays(ref: str) -> CallToolResult:
             lines.append(f"- {name} {_hm(leg.get('departure'))} → {_hm(leg.get('arrival'))}: keine Echtzeitangaben (die Fahrt liegt zu weit in der Zukunft oder die Bahn liefert noch keine).")
         else:
             def fmt(value, planned_time=None):
+                # None heißt "keine Echtzeitangabe für dieses Ende der Fahrt", nicht pünktlich -
+                # das kommt vor, wenn nur Abfahrt oder nur Ankunft eine Verspätung meldet.
+                if value is None:
+                    return "keine Angabe"
                 if not value:
                     return "pünktlich"
                 expected = ""
