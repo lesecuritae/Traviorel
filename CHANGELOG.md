@@ -1,4 +1,8 @@
 # Changelog
+## 0.3.7 - 2026-11-17
+
+- Kernvergleichs-/Darstellungs-/MCP-Logik: FlixBus/-Train ignorierten eigene Filter (`flix_options` kam aus der ungefilterten Rohliste); „günstigster Live-Preis" war nicht der günstigste, sondern der nach Präferenz best-rangierte; ein Flug ohne exakt passenden Flughafencode wurde aus der öffentlichen Antwort entfernt, während sein Preis in der Summe blieb; `missing_fields` ging bei Rundreisen/Reiseplänen verloren; Fremdwährungspreise wurden als Euro angezeigt; Hotel-Nachtpreise wurden als Gesamtpreis für den Aufenthalt bezeichnet; ein fehlgeschlagener optionaler Zusatzabruf (Hotel/Transfer/Feeder/Flix-Anreicherung) konnte die ganze Anfrage abbrechen statt nur diese eine Komponente als fehlend zu melden; fehlende Echtzeitdaten an einem Fahrtende wurden als „pünktlich" ausgegeben; das Deutschlandticket ignorierte eine über `find_station` gewählte konkrete Haltestelle und suchte stattdessen per Freitext; `prefer`/`limit` wirkten nur auf das bereits zurückgekommene Ergebnis, nicht auf die eigentliche Auswahl im Backend.
+
 ## 0.3.6 - 2026-11-17
 
 - MCP: Das Mitternachts-Suchfenster für `live_delays` blieb beim Abfahrtstag statt auf den Vortag zu wechseln, wie es die Preisfensterprüfung der Suche verlangt; eine Abfahrt zwischen 00:00 und 00:19 wurde dadurch wieder als „nicht gefunden" gemeldet. Zusätzlich behoben: `/api/diagnostics` gab weiterhin den Cache-Pfad und rohe trvl-Fehlertexte preis, die `scripts/container-check.sh`-Warnung bei fehlendem pytest im Produktionsimage wurde nie erreicht, und dreifach duplizierte Eingabefehler-Logik in den MCP-Werkzeugen ist jetzt ein gemeinsamer Helfer.
