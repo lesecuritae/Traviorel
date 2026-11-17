@@ -12,6 +12,7 @@ import pytest
 os.environ.setdefault("DB_CFFI_TOKEN", "0" * 64)
 
 from reisevergleich import api, mcp_server, price_history as ph  # noqa: E402
+from reisevergleich.utils import route_departure_in_window  # noqa: E402
 
 BERLIN = ZoneInfo("Europe/Berlin")
 
@@ -41,21 +42,35 @@ def test_known_watch_is_returned_when_the_list_is_full(watch_db):
 
 
 def test_live_window_keeps_the_day_of_the_window_start():
-    now = datetime(2026, 11, 17, 22, 0, tzinfo=BERLIN)
-    assert mcp_server._live_window("2026-11-18T00:10+01:00", now) == ("2026-11-17", "23:50")
-    assert mcp_server._live_window("2026-11-18T18:51+01:00", now) == ("2026-11-18", "18:31")
-    assert mcp_server._live_window("2026-11-17T23:30:00", now) == ("2026-11-17", "23:10")
+    assert mcp_server._live_window("2026-11-18T18:51+01:00") == ("2026-11-18", "18:31")
+    assert mcp_server._live_window("2026-11-17T23:30:00") == ("2026-11-17", "23:10")
 
 
-def test_live_window_starts_today_for_a_departure_just_after_midnight():
-    now = datetime(2026, 11, 18, 0, 5, tzinfo=BERLIN)
-    assert mcp_server._live_window("2026-11-18T00:10+01:00", now) == ("2026-11-18", "00:00")
+def test_live_window_clamps_to_midnight_instead_of_the_previous_day():
+    # route_departure_in_window (utils.py) only accepts a departure up to midnight *after*
+    # travel_date; a window dated the previous day would exclude the very departure being
+    # searched for. That silent end-to-end break is what test_live_window_result_matches_its_own_departure
+    # below guards against directly.
+    assert mcp_server._live_window("2026-11-18T00:10+01:00") == ("2026-11-18", "00:00")
+    assert mcp_server._live_window("2026-11-18T00:19+01:00") == ("2026-11-18", "00:00")
 
 
 def test_live_window_converts_other_offsets_and_survives_garbage():
-    now = datetime(2026, 11, 17, 12, 0, tzinfo=BERLIN)
-    assert mcp_server._live_window("2026-11-17T23:05+00:00", now) == ("2026-11-17", "23:45")
-    assert mcp_server._live_window("kein Datum", now) == ("kein Datum", "00:00")
+    # 23:05 UTC is 00:05 CET the next day - the same midnight case as above, just via timezone conversion.
+    assert mcp_server._live_window("2026-11-17T23:05+00:00") == ("2026-11-18", "00:00")
+    assert mcp_server._live_window("2026-11-17T20:05+00:00") == ("2026-11-17", "20:45")
+    assert mcp_server._live_window("kein Datum") == ("kein Datum", "00:00")
+
+
+@pytest.mark.parametrize("departure", [
+    "2026-11-18T00:10+01:00", "2026-11-18T00:19+01:00", "2026-11-17T23:30:00+01:00", "2026-11-18T18:51+01:00",
+])
+def test_live_window_result_matches_its_own_departure(departure):
+    """The (date, time) _live_window returns must let route_departure_in_window accept the exact
+    departure it was computed from - otherwise live_delays searches a window that excludes the
+    connection it is looking for, even though _live_window's own unit tests look correct in isolation."""
+    window_date, window_start = mcp_server._live_window(departure)
+    assert route_departure_in_window({"departure": departure}, window_date, window_start, tolerance_minutes=0)
 
 
 def test_live_delays_reports_a_past_trip_instead_of_raising(monkeypatch):
@@ -111,3 +126,24 @@ def test_diagnostics_does_not_publish_exception_messages(monkeypatch):
     assert result["db_api"] == {"ok": False, "error": "RuntimeError"}
     assert result["transitous"] == {"ok": False, "error": "RuntimeError"}
     assert "db-api" not in str(result)
+
+
+def test_diagnostics_redacts_cache_path_and_trvl_stderr(monkeypatch):
+    class Broken:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("boom")
+
+    async def cache_with_path():
+        return {"status": "ok", "path": "/data/reisevergleich/cache.sqlite3", "schema": 7}
+
+    async def trvl_with_stderr():
+        return {"flights": {"ok": False, "error": "/etc/trvl/secret-config.toml: Permission denied"}}
+
+    monkeypatch.setattr(api.httpx, "AsyncClient", Broken)
+    monkeypatch.setattr(api, "capability_report", trvl_with_stderr)
+    monkeypatch.setattr(api, "cache_health", cache_with_path)
+    result = asyncio.run(api.diagnostics())
+    assert result["cache"] == {"status": "ok"}
+    assert result["trvl"] == {"flights": {"ok": False}}
+    assert "cache.sqlite3" not in str(result)
+    assert "secret-config" not in str(result)
