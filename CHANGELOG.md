@@ -1,4 +1,9 @@
 # Changelog
+## 0.3.6 - 2026-11-17
+
+- MCP: Das Mitternachts-Suchfenster für `live_delays` blieb beim Abfahrtstag statt auf den Vortag zu wechseln, wie es die Preisfensterprüfung der Suche verlangt; eine Abfahrt zwischen 00:00 und 00:19 wurde dadurch wieder als „nicht gefunden" gemeldet. Zusätzlich behoben: `/api/diagnostics` gab weiterhin den Cache-Pfad und rohe trvl-Fehlertexte preis, die `scripts/container-check.sh`-Warnung bei fehlendem pytest im Produktionsimage wurde nie erreicht, und dreifach duplizierte Eingabefehler-Logik in den MCP-Werkzeugen ist jetzt ein gemeinsamer Helfer.
+- db-api: Split-Preisanalyse akzeptierte unverifizierte Tarife (`journey.price`-Fallback, nicht klassifizierte Fahrscheine), die die normale Suche selbst verbirgt. Erste-Klasse-Anfragen bekamen nie einen Preis, da erste-Klasse-Tickets grundsätzlich verworfen wurden. Abfahrtstafeln mit Ziel füllten den geteilten 200-Einträge-Cache mit nie eingelösten Analyse-Tokens und ließen echte `/split`-Tokens vorzeitig verfallen. Eine langsame Teilanalyse verwarf bereits gefundene Ersparnisse komplett statt Teilergebnisse zu behalten. Eine erfolgreiche Suche hob eine gerade erst gesetzte DBnav-Sperre sofort wieder auf. Die Stationssuche (`/locations`) umging die DBnav-Drosselung und Schutzschaltung vollständig. `OPS_BLOCKED` wurde nur bei HTTP-2xx-Antworten erkannt. Eine 404-Antwort einer Stationssuche brach `/departures` komplett ab statt das andere Profil zu versuchen. Der bisher nie aufgerufene `REISEVERGLEICH_SELF_TEST`-Selbsttest läuft jetzt automatisch in der CI.
+
 ## 0.3.4 - 2026-11-13
 
 - trvl auf geprüften Commit `b20e226` nach v1.27.0 angehoben: korrigierter Air-France/KLM-Gesamtpreis für Hin-/Rückflüge, Wizz-Air-API 29.24.0 und aktuelle TLS-/Browser-Abhängigkeiten. Der Stand wird ausdrücklich als `1.27.0+git.b20e226` ausgewiesen, nicht als erfundener stabiler Release.
