@@ -251,7 +251,11 @@ async def compare_trip(request: ReiseRequest) -> dict[str, Any]:
             tolerance_minutes=SEARCH_DEPARTURE_TOLERANCE_MINUTES,
         )
     ]
-    flix_routes = await complete_flix_routes(flix_routes, request)
+    try:
+        flix_routes = await complete_flix_routes(flix_routes, request)
+    except Exception:
+        # Flix enrichment is additive detail; losing it must not fail the whole comparison.
+        pass
     flix_routes = [route for route in flix_routes if _transport_selected(route, request)]
     db_routes = _attach_coverage_endpoints(db_routes, request)
     flix_routes = _attach_coverage_endpoints(flix_routes, request)
@@ -300,6 +304,9 @@ async def compare_trip(request: ReiseRequest) -> dict[str, Any]:
         route for route in combined
         if as_float(route.get("price")) > 0 and route.get("price_complete") is not False
     ]
+    # priced keeps combined's preference ranking (fastest/fewest_transfers/...), not price order;
+    # priced[0] is only "cheapest" when the preference happens to be price-first.
+    cheapest_priced = min(priced, key=lambda route: as_float(route.get("price")), default=None)
     fastest = min(combined, key=lambda route: as_int(route.get("duration_minutes")) or 1_000_000, default=None)
 
     has_db_price = any(
@@ -348,14 +355,14 @@ async def compare_trip(request: ReiseRequest) -> dict[str, Any]:
             ),
         ],
         "db_options": [compact_route(route) for route in ranked_db[:3]],
-        "flix_options": (flix_result.get("routes") or [])[:3],
+        "flix_options": flix_routes[:3],
         "visible_options": [
             compact_route(route) if route.get("db_source") else route
             for route in visible_options
         ],
         "recommendation": {
             "fastest": compact_route(fastest) if isinstance(fastest, dict) and fastest.get("db_source") else fastest,
-            "cheapest_with_live_price": compact_route(priced[0]) if priced and priced[0].get("db_source") else (priced[0] if priced else None),
+            "cheapest_with_live_price": compact_route(cheapest_priced) if cheapest_priced and cheapest_priced.get("db_source") else cheapest_priced,
         },
         "manual_db_links": manual_links,
         "split_ticket": _compact_split(split),
@@ -366,7 +373,16 @@ async def compare_trip(request: ReiseRequest) -> dict[str, Any]:
 
 
 async def deutschlandticket(request: DeutschlandticketRequest) -> dict[str, Any]:
-    db_task = asyncio.create_task(db_search_with_retry(
+    # A find_station selection must be honoured the same way compare_trip honours it: search by
+    # that exact stop's own id, or skip the provider rather than fall back to a free-text name
+    # that can resolve to a different, similarly named station or bus stop (Issue: D-Ticket
+    # routes bypassed an explicit station selection).
+    selections_active = bool(request.origin_station and request.destination_station)
+    db_origin_id = request.origin_station.id_for("db") if request.origin_station else None
+    db_destination_id = request.destination_station.id_for("db") if request.destination_station else None
+    async def unsupported_db():
+        return ({"status": "empty", "journeys": []}, [{"source": "db-api", "ok": False, "skipped": True, "error": "Ausgewählte Station besitzt keine DB-ID."}])
+    db_task = asyncio.create_task((db_search_with_retry(
         origin=request.origin,
         destination=request.destination,
         travel_date=request.travel_date,
@@ -375,7 +391,9 @@ async def deutschlandticket(request: DeutschlandticketRequest) -> dict[str, Any]
         transport_mode=request.transport_mode,
         max_transfers=request.max_transfers,
         results=request.max_results,
-    ))
+        origin_id=db_origin_id,
+        destination_id=db_destination_id,
+    ) if not selections_active or (db_origin_id and db_destination_id) else unsupported_db()))
     fallback = ReiseRequest(
         transport_mode=request.transport_mode,
         origin=request.origin,
@@ -388,8 +406,17 @@ async def deutschlandticket(request: DeutschlandticketRequest) -> dict[str, Any]
         max_transfers=request.max_transfers,
         max_results=request.max_results,
         split_ticket_check=False,
+        origin_station=request.origin_station,
+        destination_station=request.destination_station,
     )
-    transitous_task = asyncio.create_task(transitous_search(fallback, deutschlandticket_only=True))
+    transitous_supported = not selections_active or (
+        request.origin_station.id_for("transitous") and request.destination_station.id_for("transitous")
+    )
+    async def unsupported_transitous():
+        return {"routes": [], "diagnostic": {"ok": False, "skipped": True, "error": "Ausgewählte Station besitzt keine Transitous-ID."}}
+    transitous_task = asyncio.create_task(
+        transitous_search(fallback, deutschlandticket_only=True) if transitous_supported else unsupported_transitous()
+    )
 
     try:
         result, attempts = await db_task
@@ -497,6 +524,7 @@ async def compare_ground_round_trip(
         outward_dt = await deutschlandticket(DeutschlandticketRequest(
             origin=origin, destination=destination, travel_date=outbound_date,
             departure_after=departure_after, max_transfers=max_transfers, max_results=max_results, transport_mode=transport_mode,
+            origin_station=origin_station, destination_station=destination_station,
         ))
         outward_routes = outward_dt.get("routes") or []
         if one_way:
@@ -538,6 +566,7 @@ async def compare_ground_round_trip(
         return_dt = await deutschlandticket(DeutschlandticketRequest(
             origin=destination, destination=origin, travel_date=return_date,
             departure_after=departure_after, max_transfers=max_transfers, max_results=max_results, transport_mode=transport_mode,
+            origin_station=destination_station, destination_station=origin_station,
         ))
         outward_routes = outward_dt.get("routes") or []
         return_routes = return_dt.get("routes") or []
@@ -594,15 +623,20 @@ async def compare_ground_round_trip(
     if one_way:
         outbound_mixed: list[dict[str, Any]] = []
         if deutschlandticket_mode == "include" and split_candidates:
-            outbound_mixed = await ground_mixed_options(
-                origin, destination, outbound_date, departure_after, split_candidates,
-                include_flixbus=include_flixbus, include_flixtrain=include_flixtrain,
-            )
+            try:
+                outbound_mixed = await ground_mixed_options(
+                    origin, destination, outbound_date, departure_after, split_candidates,
+                    include_flixbus=include_flixbus, include_flixtrain=include_flixtrain,
+                )
+            except Exception:
+                # Mixed-ticket options are an additive extra; losing them must not fail the trip.
+                outbound_mixed = []
         dticket: dict[str, Any] | None = None
         if deutschlandticket_mode == "include":
             outward_dt = await deutschlandticket(DeutschlandticketRequest(
                 origin=origin, destination=destination, travel_date=outbound_date,
                 departure_after=departure_after, max_transfers=max_transfers, max_results=max_results, transport_mode=transport_mode,
+                origin_station=origin_station, destination_station=destination_station,
             ))
             dticket = {
                 "outbound": outward_dt.get("routes") or [],
@@ -672,10 +706,14 @@ async def compare_ground_round_trip(
     outbound_mixed: list[dict[str, Any]] = []
     return_mixed: list[dict[str, Any]] = []
     if deutschlandticket_mode == "include" and split_candidates:
-        outbound_mixed, return_mixed = await asyncio.gather(
+        # Mixed-ticket options are an additive extra; losing one side must not fail the trip.
+        mixed_results = await asyncio.gather(
             ground_mixed_options(origin, destination, outbound_date, departure_after, split_candidates, include_flixbus=include_flixbus, include_flixtrain=include_flixtrain),
             ground_mixed_options(destination, origin, return_date, departure_after, list(reversed(split_candidates)), include_flixbus=include_flixbus, include_flixtrain=include_flixtrain),
+            return_exceptions=True,
         )
+        outbound_mixed = mixed_results[0] if isinstance(mixed_results[0], list) else []
+        return_mixed = mixed_results[1] if isinstance(mixed_results[1], list) else []
 
     dticket: dict[str, Any] | None = None
     if deutschlandticket_mode == "include":
@@ -683,10 +721,12 @@ async def compare_ground_round_trip(
             deutschlandticket(DeutschlandticketRequest(
                 origin=origin, destination=destination, travel_date=outbound_date,
                 departure_after=departure_after, max_transfers=max_transfers, max_results=max_results, transport_mode=transport_mode,
+                origin_station=origin_station, destination_station=destination_station,
             )),
             deutschlandticket(DeutschlandticketRequest(
                 origin=destination, destination=origin, travel_date=return_date,
                 departure_after=departure_after, max_transfers=max_transfers, max_results=max_results, transport_mode=transport_mode,
+                origin_station=destination_station, destination_station=origin_station,
             )),
         )
         dticket = {

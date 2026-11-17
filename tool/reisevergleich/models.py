@@ -181,6 +181,8 @@ class DeutschlandticketRequest(BaseModel):
     departure_after: str = "06:00"
     max_transfers: int | None = Field(default=None, ge=0, le=10)
     max_results: int = Field(default=24, ge=1, le=48)
+    origin_station: StationSelection | None = None
+    destination_station: StationSelection | None = None
 
     @field_validator("origin", "destination")
     @classmethod
@@ -194,6 +196,14 @@ class DeutschlandticketRequest(BaseModel):
     @classmethod
     def valid_date(cls, value: str) -> str:
         return str(_future_or_today(value, "travel_date"))
+
+    @model_validator(mode="after")
+    def matches_selected_stations(self):
+        if self.origin_station and self.origin.casefold() != self.origin_station.name.casefold():
+            raise ValueError("origin muss der ausgewählten origin_station entsprechen")
+        if self.destination_station and self.destination.casefold() != self.destination_station.name.casefold():
+            raise ValueError("destination muss der ausgewählten destination_station entsprechen")
+        return self
 
     @field_validator("departure_after")
     @classmethod
@@ -315,7 +325,7 @@ class TripRequest(BaseModel):
     # Bounded before the validator runs: it keeps 8, and dedup cost grew with the raw list.
     feeder_split_candidates: list[str] = Field(default_factory=list, max_length=32)
     feeder_transfer_minutes: int = Field(default=15, ge=5, le=60)
-    feeder_preference: Literal["dticket_first", "cheapest", "fastest", "balanced"] = "dticket_first"
+    feeder_preference: Literal["dticket_first", "cheapest", "fastest", "balanced", "fewest_transfers"] = "dticket_first"
 
     origin_airports: list[str] = Field(
         default_factory=list,

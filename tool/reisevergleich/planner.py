@@ -281,7 +281,13 @@ async def complete_trip(request: TripRequest) -> dict[str, Any]:
         ))
         for code in origin_codes
     }
-    flight_results = {code: await task for code, task in flight_tasks.items()}
+    # One origin's flight search failing (network error, provider outage) must not take down
+    # every other origin's already-finished results with it.
+    flight_values = await asyncio.gather(*flight_tasks.values(), return_exceptions=True)
+    flight_results = {
+        code: (value if not isinstance(value, BaseException) else {"status": "failed", "flight_options": []})
+        for code, value in zip(flight_tasks.keys(), flight_values)
+    }
 
     candidates: list[dict[str, Any]] = []
     for code, result in flight_results.items():
@@ -316,10 +322,13 @@ async def complete_trip(request: TripRequest) -> dict[str, Any]:
                         request.return_airport_buffer_minutes,
                         deutschlandticket_available=feeder_deutschlandticket_available,
                     )))
-                values = await asyncio.gather(*tasks)
-                outbound_probe = values[0]
+                # A feeder-probe failure for one flight option must not take down the probing
+                # of every other option; treat it as "no compatible feeder found" instead.
+                values = await asyncio.gather(*tasks, return_exceptions=True)
+                fallback_probe = {"compatible": False, "price": 0.0}
+                outbound_probe = values[0] if not isinstance(values[0], BaseException) else fallback_probe
                 if len(values) > 1:
-                    return_probe = values[1]
+                    return_probe = values[1] if not isinstance(values[1], BaseException) else fallback_probe
             return {
                 "flight": option,
                 "return_date": candidate_return_date,
@@ -373,10 +382,12 @@ async def complete_trip(request: TripRequest) -> dict[str, Any]:
                 )))
                 labels.append("back")
             if tasks:
-                values = await asyncio.gather(*tasks)
+                # A failure on one leg's feeder search must not discard the other leg's result.
+                values = await asyncio.gather(*tasks, return_exceptions=True)
                 for label, value in zip(labels, values):
-                    if label == "out": outbound_feeder = value
-                    else: return_feeder = value
+                    resolved_value = value if not isinstance(value, BaseException) else None
+                    if label == "out": outbound_feeder = resolved_value
+                    else: return_feeder = resolved_value
             flight_price = as_float(option.get("price"))
             out_price = _selected_price(outbound_feeder)
             back_price = _selected_price(return_feeder)
@@ -457,8 +468,13 @@ async def complete_trip(request: TripRequest) -> dict[str, Any]:
 
             resolved: dict[str, Any] = {}
             if tasks:
-                values = await asyncio.gather(*tasks.values())
-                resolved = dict(zip(tasks.keys(), values))
+                # A hotel/transfer failure must not fail the whole trip plan; mark that one
+                # component as missing instead (same as cost_summary already treats None).
+                values = await asyncio.gather(*tasks.values(), return_exceptions=True)
+                resolved = {
+                    key: (value if not isinstance(value, BaseException) else None)
+                    for key, value in zip(tasks.keys(), values)
+                }
 
             enriched = {
                 **package,
