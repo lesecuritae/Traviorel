@@ -250,12 +250,7 @@ async def search_ground(
             transport_mode=transport_mode,
         )
     except ValidationError as exc:
-        fields = [{"field": ".".join(str(v) for v in e["loc"]) or "request", "message": e["msg"]}
-                  for e in exc.errors(include_url=False, include_context=False, include_input=False)]
-        for field in fields:
-            if field["field"] == "departure_date":
-                field["field"] = "date"
-        return _search_input_error(fields, now)
+        return _search_input_error(_validation_fields(exc, rename={"departure_date": "date"}), now)
     result = await search(request)
     connections = _find_connections(result)
     key = {"cheapest": lambda c: (c.get("price") is None, c.get("price") or 0), "fastest": lambda c: c.get("duration_minutes") or 10**6,
@@ -297,8 +292,7 @@ async def search_hotels(
         request = HotelRequest(location=location, checkin_date=checkin_date, checkout_date=checkout_date,
                                adults=adults, min_stars=min_stars, max_results=max_results)
     except ValidationError as exc:
-        fields = [{"field": ".".join(map(str, e["loc"])) or "request", "message": e["msg"]}
-                  for e in exc.errors(include_url=False, include_input=False, include_context=False)]
+        fields = _validation_fields(exc)
         return CallToolResult(is_error=True, content=[TextContent(type="text", text="Ungültige Hoteldaten: "
             + "; ".join(f"{e['field']}: {e['message']}" for e in fields))],
             structured_content={"error": {"code": "INVALID_ARGUMENTS", "fields": fields}, "server_time": _clock_info(now)})
@@ -421,11 +415,18 @@ def _validation_fields(exc: Exception, rename: dict[str, str] | None = None) -> 
     return fields
 
 
-def _live_window(departure: str, now: datetime) -> tuple[str, str]:
+def _live_window(departure: str) -> tuple[str, str]:
     """Suchfenster 20 Minuten vor der Abfahrt, mit dem dazu passenden Tag.
 
-    Früher blieb das Datum beim Abfahrtstag: eine Abfahrt um 00:10 wurde ab 23:50 desselben Tages gesucht, also fast einen
-    Tag zu spät. Liegt der Fensterbeginn vor heute (laufende Fahrt nach Mitternacht), beginnt die Suche heute um 00:00.
+    Das Fenster muss auf dem Abfahrtstag bleiben: route_departure_in_window (utils.py) akzeptiert eine Abfahrt nur bis
+    Mitternacht nach travel_date, ein Fensterbeginn auf dem Vortag würde die gesuchte Abfahrt selbst wieder ausschließen
+    (eine Abfahrt um 00:10 landete so wieder außerhalb des eigenen Suchfensters). Bei einer Abfahrt zwischen 00:00 und
+    00:19 wird die Startzeit deshalb auf 00:00 desselben Tages gekappt statt auf den Vortag zu wechseln - wie
+    departure_search_floor es für neue Suchen bereits tut.
+
+    Eine schon laufende Fahrt, die gestern Abend losgefahren ist, erreicht dieses Fenster nicht mehr: travel_date
+    müsste dafür in der Vergangenheit liegen, was die Datumsprüfung ablehnt. live_delays meldet in diesem Fall, dass
+    die Verbindung nicht mehr gefunden wird.
     """
     try:
         parsed = datetime.fromisoformat(departure)
@@ -433,8 +434,8 @@ def _live_window(departure: str, now: datetime) -> tuple[str, str]:
         return departure[:10], "00:00"
     local = parsed.astimezone(TZ) if parsed.tzinfo else parsed
     start = local - timedelta(minutes=20)
-    if start.date() < now.date() <= local.date():
-        return now.date().isoformat(), "00:00"
+    if start.date() != local.date():
+        return local.date().isoformat(), "00:00"
     return start.date().isoformat(), start.strftime("%H:%M")
 
 
@@ -448,7 +449,7 @@ async def live_delays(ref: str) -> CallToolResult:
     """
     connection = _connection(ref)
     departure = str(connection.get("departure") or "")
-    window_date, window_start = _live_window(departure, _server_now())
+    window_date, window_start = _live_window(departure)
     try:
         request = TripRequest(
             travel_mode="ground", journey_type="one_way", origin=str(connection.get("origin") or ""), destination=str(connection.get("destination") or ""),
@@ -735,8 +736,7 @@ async def next_departures(
             deutschlandticket_only=deutschlandticket_only, departure_in_minutes=departure_in_minutes,
             duration_minutes=duration_minutes, limit=limit, origin_station=origin_station, destination_station=destination_station)
     except ValidationError as exc:
-        return _search_input_error([{"field": ".".join(map(str, e["loc"])) or "request", "message": e["msg"]}
-                                   for e in exc.errors(include_url=False, include_input=False, include_context=False)], now)
+        return _search_input_error(_validation_fields(exc), now)
     if request.transport_mode == "all" and request.origin_station is None and request.destination is None:
         try:
             catalog = await search_stations(request.origin, 8)

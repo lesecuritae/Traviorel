@@ -138,11 +138,14 @@ async def diagnostics() -> dict[str, Any]:
         and cache.get("status") == "ok"
         and (trvl.get("enabled") is False or all(item.get("ok") for item in trvl.values()))
     )
+    # Unauthenticated endpoint: drop the raw trvl stderr (can name internal paths/hosts) and the
+    # cache's filesystem path, keeping only the ok/status flags the health check above already uses.
+    trvl_public = trvl if trvl.get("enabled") is False else {command: {"ok": result.get("ok")} for command, result in trvl.items()}
     return {
         "status": "ok" if required else "degraded",
         "version": APP_VERSION,
         "db_api": db,
         "transitous": transitous,
-        "trvl": trvl,
-        "cache": cache,
+        "trvl": trvl_public,
+        "cache": {"status": cache.get("status")},
     }
