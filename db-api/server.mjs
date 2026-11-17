@@ -157,6 +157,24 @@ async function cffiDbnavRequest(ctx, userAgent, reqData) {
   }
 
   const result = await bridgeResponse.json();
+  let parsedBody;
+  let parseError;
+  try {
+    parsedBody = JSON.parse(result.body);
+  } catch (error) {
+    parseError = error;
+  }
+  // OPS_BLOCKED can arrive on any HTTP status from the upstream; checking it only after the
+  // status gate below meant a non-2xx OPS_BLOCKED response never opened the circuit, so
+  // departures and split lookups (the callers with no OPS_BLOCKED text fallback of their own)
+  // kept hammering dbnav during an active block.
+  if (parsedBody?.code === 'OPS_BLOCKED' || parsedBody?.status === 'OPS_BLOCKED') {
+    markDbnavBlocked();
+    const error = new Error(`DBnav OPS_BLOCKED für ${url}`);
+    error.code = 'OPS_BLOCKED';
+    error.details = parsedBody;
+    throw error;
+  }
   if (result.status < 200 || result.status >= 300) {
     const error = new Error(`curl_cffi HTTP ${result.status} für ${url}`);
     error.response = {
@@ -166,16 +184,13 @@ async function cffiDbnavRequest(ctx, userAgent, reqData) {
     throw error;
   }
 
-  let body;
-  try {
-    body = JSON.parse(result.body);
-  } catch (error) {
-    throw new Error(`Ungültiges JSON von ${url}: ${String(error?.message || error)}`);
+  if (parseError) {
+    throw new Error(`Ungültiges JSON von ${url}: ${String(parseError?.message || parseError)}`);
   }
-  if (body?.code === 'OPS_BLOCKED' || body?.status === 'OPS_BLOCKED' || (body?.status === 'ERROR' && body?.code)) {
-    if (body?.code === 'OPS_BLOCKED') markDbnavBlocked();
-    const error = new Error(`DBnav ${body?.code || body?.status || 'ERROR'} für ${url}`);
-    error.code = body?.code || body?.status || 'DBNAV_ERROR';
+  const body = parsedBody;
+  if (body?.status === 'ERROR' && body?.code) {
+    const error = new Error(`DBnav ${body.code} für ${url}`);
+    error.code = body.code;
     error.details = body;
     throw error;
   }
@@ -536,7 +551,7 @@ function isRegularAdultFareName(value) {
   return true;
 }
 
-function bestMoney(journey) {
+function bestMoney(journey, {firstClass: wantFirstClass = false} = {}) {
   const directAmount = toNumber(journey?.price?.amount ?? journey?.price);
   if (directAmount !== null && directAmount > 0 && !Array.isArray(journey?.tickets)) {
     return {
@@ -581,7 +596,9 @@ function bestMoney(journey) {
       priceCandidates: [],
     };
   }
-  const eligible = valid.filter((candidate) => candidate.eligibilityKnown && !candidate.firstClass);
+  // The requested class, not a blanket exclusion: a first_class:true request got no price at
+  // all, because every first-class ticket was dropped regardless of what was asked for.
+  const eligible = valid.filter((candidate) => candidate.eligibilityKnown && candidate.firstClass === wantFirstClass);
   const fullFares = eligible.filter((candidate) => !candidate.partialFare);
   const selected = (fullFares.length ? fullFares : eligible)[0];
   if (!selected) {
@@ -596,6 +613,15 @@ function bestMoney(journey) {
     fareName: selected.fareName,
     eligibilityKnown: true,
   };
+}
+
+// A bestMoney() result is only safe to show or use in a calculation (split savings, "do we
+// already have a price") when it is a verified regular-adult, non-partial fare. journey.price
+// fallbacks and unclassified/partial tickets set price to a non-null amount with
+// eligibilityKnown false or partialFare true - callers that only checked `price !== null` were
+// using fares /search itself refuses to show.
+function usablePrice(money) {
+  return money.eligibilityKnown === true && !money.partialFare ? money.price : null;
 }
 
 function dateValue(value) {
@@ -701,7 +727,7 @@ function normalizeLeg(leg) {
   };
 }
 
-function normalizeJourney(journey, from, to, mode, index, profileName) {
+function normalizeJourney(journey, from, to, mode, index, profileName, {firstClass = false, cacheForSplit = true} = {}) {
   const legs = (journey?.legs || []).filter((leg) => !leg?.walking);
   if (!legs.length) return null;
   const first = legs[0];
@@ -709,15 +735,19 @@ function normalizeJourney(journey, from, to, mode, index, profileName) {
   const departure = plannedDeparture(first);
   const arrival = plannedArrival(last);
   if (!departure || !arrival) return null;
-  const money = bestMoney(journey);
-  const usablePrice = money.partialFare || money.eligibilityKnown !== true ? null : money.price;
-  const analysisToken = cacheJourney(journey, {
+  const money = bestMoney(journey, {firstClass});
+  const usable = usablePrice(money);
+  // Departure-board lookups only read .legs[0] off these results and never see the analysis
+  // token; caching them anyway filled the 200-entry cache with tokens nobody can redeem and
+  // evicted real /split tokens long before their 15-minute TTL (Issue: analysis tokens expiring
+  // early under ordinary multi-user traffic).
+  const analysisToken = cacheForSplit ? cacheJourney(journey, {
     from,
     to,
     mode,
     profileName,
     cffiSessionKey: currentCffiSessionKey(),
-  });
+  }) : null;
   const normalSearchUrl = buildDbUrl(from, to, departure, false);
   const bestPriceSearchUrl = buildDbUrl(from, to, departure, true);
   return {
@@ -736,7 +766,7 @@ function normalizeJourney(journey, from, to, mode, index, profileName) {
     arrival: isoValue(arrival),
     duration_minutes: minutesBetween(departure, arrival),
     transfers: Math.max(0, legs.length - 1),
-    price: mode === 'deutschlandticket' ? 0 : usablePrice,
+    price: mode === 'deutschlandticket' ? 0 : usable,
     listed_price: money.price,
     currency: money.currency,
     price_source: money.source,
@@ -817,22 +847,47 @@ async function mapWithConcurrency(items, concurrency, worker) {
   return results;
 }
 
-async function searchWithProfile(profileName, body) {
+// Like mapWithConcurrency, but a budget overrun returns whatever finished instead of throwing
+// away every already-computed result. The old code raced the whole mapWithConcurrency call
+// against the same SPLIT_TIMEOUT_MS it used as the per-point "give up" threshold, so the
+// per-point check could only fire at the same moment the overall race rejected - any split that
+// ran past its budget lost every option it had already found, not just the slow ones.
+async function mapWithConcurrencyBudget(items, concurrency, worker, budgetMs) {
+  const results = new Array(items.length);
+  const deadline = Date.now() + budgetMs;
+  let next = 0;
+  async function run() {
+    while (true) {
+      if (Date.now() >= deadline) return;
+      const index = next;
+      next += 1;
+      if (index >= items.length) return;
+      results[index] = await worker(items[index], index);
+    }
+  }
+  const runners = Promise.all(Array.from({length: Math.min(concurrency, items.length || 1)}, run));
+  await Promise.race([runners, new Promise((resolve) => setTimeout(resolve, budgetMs))]);
+  return results;
+}
+
+async function searchWithProfile(profileName, body, {cacheForSplit = true} = {}) {
   const transportMode = groundTransportMode(body);
   const client = clients[profileName];
   if (!client) throw new Error(`unknown DB profile: ${profileName}`);
-  const [origin, destination] = await Promise.all([
-    resolveLocation(client, body.origin, profileName, body.origin_id),
-    resolveLocation(client, body.destination, profileName, body.destination_id),
-  ]);
   const mode = body.mode === 'deutschlandticket' ? 'deutschlandticket' : 'all';
   const departure = body.departure ? new Date(body.departure) : null;
   const arrival = body.arrival ? new Date(body.arrival) : null;
   const arrivalBefore = body.arrival_before ? new Date(body.arrival_before) : null;
+  // Pure input-shape checks first, before any upstream lookup: a malformed timestamp used to
+  // trigger up to four location-resolution requests first and still come back 200 {status:'empty'}.
   if (!departure && !arrival) throw new HttpError(400, 'departure or arrival ISO timestamp required');
   if (departure && Number.isNaN(departure.getTime())) throw new HttpError(400, 'invalid departure ISO timestamp');
   if (arrival && Number.isNaN(arrival.getTime())) throw new HttpError(400, 'invalid arrival ISO timestamp');
   if (arrivalBefore && Number.isNaN(arrivalBefore.getTime())) throw new HttpError(400, 'invalid arrival_before ISO timestamp');
+  const [origin, destination] = await Promise.all([
+    resolveLocation(client, body.origin, profileName, body.origin_id),
+    resolveLocation(client, body.destination, profileName, body.destination_id),
+  ]);
   const maxResults = Math.min(Math.max(Number(body.results || 8), 1), 48);
   const options = {
     results: maxResults,
@@ -867,7 +922,9 @@ async function searchWithProfile(profileName, body) {
 
   const normalized = journeys
     .filter((journey) => journeyMatchesTransport(journey, transportMode))
-    .map((journey, index) => normalizeJourney(journey, origin, destination, mode, index, profileName))
+    .map((journey, index) => normalizeJourney(journey, origin, destination, mode, index, profileName, {
+      firstClass: Boolean(body.first_class), cacheForSplit,
+    }))
     .filter(Boolean)
     .filter((journey) => !arrivalBefore || (journey.arrival && new Date(journey.arrival) <= arrivalBefore))
     .slice(0, maxResults);
@@ -907,10 +964,15 @@ async function searchJourneys(body) {
       continue;
     }
     try {
+      // A refresh nested inside searchWithProfile swallows its own OPS_BLOCKED (refreshJourneySafely
+      // returns the journey unpriced rather than throwing), so the circuit it just opened must
+      // survive this success path. Comparing before/after catches that without clearing a block a
+      // concurrent request set for an unrelated reason.
+      const blockedBefore = dbnavBlockedUntil;
       const result = profileName === 'dbnav'
         ? await withDbnavSlot(() => searchWithProfile(profileName, body))
         : await searchWithProfile(profileName, body);
-      if (profileName === 'dbnav') dbnavBlockedUntil = 0;
+      if (profileName === 'dbnav' && dbnavBlockedUntil === blockedBefore) dbnavBlockedUntil = 0;
       const priced = Number(result?.diagnostics?.priced || 0);
       attempts.push({
         profile: profileName,
@@ -933,6 +995,12 @@ async function searchJourneys(body) {
       if (profileName === 'dbnav' && (error?.code === 'OPS_BLOCKED' || errorText(error).includes('OPS_BLOCKED'))) {
         markDbnavBlocked();
       }
+      // Malformed input (missing/invalid timestamps, bad transport_mode) is a 400 regardless of
+      // which profile hit it first, and searchWithProfile now validates it before any upstream
+      // lookup; a client could not previously tell a bad request from a genuine "no connections
+      // found", because it came back 200 {status:'empty'} either way. A 404 (this profile's own
+      // station index has no match) still falls through to the next profile, same as /departures.
+      if (error instanceof HttpError && error.status === 400) throw error;
       attempts.push({profile: profileName, ok: false, error: errorText(error)});
     }
   }
@@ -990,7 +1058,7 @@ async function departuresWithProfile(profileName, body) {
       destination: body.destination, destination_id: body.destination_id,
       departure: when.toISOString(), results: Math.min(limit * 2, 40), with_prices: false,
       mode: body.deutschlandticket_only ? 'deutschlandticket' : 'all', transport_mode: transportMode,
-    });
+    }, {cacheForSplit: false});
     raw = journeys.journeys.map((journey) => journey.legs[0]).filter(Boolean).map((leg) => ({
       tripId: leg.trip_id, stop: leg.origin, line: {name: leg.line, product: leg.product},
       plannedWhen: leg.departure,
@@ -1042,8 +1110,12 @@ async function searchDepartures(body) {
       if (result.departures.length || result.cancelled_departures.length) return {...result, attempts};
       empty ??= result;
     } catch (error) {
-      if (error instanceof HttpError) throw error;
-      attempts.push({profile: profileName, ok: false, code: error?.code || 'UPSTREAM_ERROR'});
+      // A 404 here is resolveLocation saying THIS profile's own station index has no match for
+      // the name, not that the request is invalid - the other profile may still resolve it, same
+      // as 404s are treated in searchJourneys. Genuine input errors (missing/invalid body fields)
+      // are 400s and still abort immediately.
+      if (error instanceof HttpError && error.status !== 404) throw error;
+      attempts.push({profile: profileName, ok: false, code: error?.code || (error instanceof HttpError ? `HTTP_${error.status}` : 'UPSTREAM_ERROR')});
     }
   }
   return empty ? {...empty, attempts} : {status: 'failed', departures: [], attempts};
@@ -1197,12 +1269,14 @@ function journeyTimeScore(journey, expectedDeparture, expectedArrival) {
 }
 
 async function ensurePricedJourney(client, profileName, journey, body, timeoutMs = REQUEST_TIMEOUT_MS) {
-  if (bestMoney(journey).price !== null) return journey;
+  // Only skip the refresh for a price /search itself would show; journey.price fallbacks and
+  // unclassified/partial fares need a real refresh to find out whether a usable price exists.
+  if (usablePrice(bestMoney(journey, {firstClass: Boolean(body.first_class)})) !== null) return journey;
   return refreshJourneySafely(client, profileName, journey, {...body, with_prices: true}, timeoutMs);
 }
 
 async function ensurePricedJourneyWithProfileGate(client, profileName, journey, body) {
-  if (bestMoney(journey).price !== null) return journey;
+  if (usablePrice(bestMoney(journey, {firstClass: Boolean(body.first_class)})) !== null) return journey;
   if (profileName === 'dbnav') {
     return withDbnavSlot(() => ensurePricedJourney(client, profileName, journey, body));
   }
@@ -1237,11 +1311,10 @@ async function findExactJourney(client, profileName, from, to, targetDeparture, 
   return profileName === 'dbnav' ? withDbnavSlot(lookup) : lookup();
 }
 
-function normalizeSplitSegment(journey, index) {
+function normalizeSplitSegment(journey, money, index) {
   const legs = (journey?.legs || []).filter((leg) => !leg?.walking);
   const first = legs[0];
   const last = legs.at(-1);
-  const money = bestMoney(journey);
   return {
     id: `split-segment-${index}`,
     origin: first?.origin?.name || null,
@@ -1277,9 +1350,15 @@ async function analyzeSplitPoint(client, profileName, point, journey, body) {
   ]);
   if (!first || !second) return {status: 'no_exact_match'};
 
-  const firstMoney = bestMoney(first);
-  const secondMoney = bestMoney(second);
-  if (firstMoney.price === null || secondMoney.price === null) return {status: 'price_missing'};
+  const wantFirstClass = Boolean(body.first_class);
+  const firstMoney = bestMoney(first, {firstClass: wantFirstClass});
+  const secondMoney = bestMoney(second, {firstClass: wantFirstClass});
+  // eligibilityKnown false covers journey.price fallbacks and unclassified fares: a price
+  // /search itself would hide, that split analysis used to accept as the segment's "from" fare.
+  if (firstMoney.price === null || secondMoney.price === null
+      || firstMoney.eligibilityKnown !== true || secondMoney.eligibilityKnown !== true) {
+    return {status: 'price_missing'};
+  }
   if (firstMoney.partialFare || secondMoney.partialFare) return {status: 'partial_price'};
 
   const firstLegs = (first.legs || []).filter((leg) => !leg?.walking);
@@ -1297,7 +1376,7 @@ async function analyzeSplitPoint(client, profileName, point, journey, body) {
     split_arrival: point.arrival.toISOString(),
     split_departure: point.departure.toISOString(),
     total_price: Math.round((firstMoney.price + secondMoney.price) * 100) / 100,
-    segments: [normalizeSplitSegment(first, 1), normalizeSplitSegment(second, 2)],
+    segments: [normalizeSplitSegment(first, firstMoney, 1), normalizeSplitSegment(second, secondMoney, 2)],
   };
 }
 
@@ -1314,8 +1393,8 @@ async function splitAnalyze(body) {
   if (!client) throw new HttpError(500, `unknown cached DB profile: ${profileName}`);
   let journey = cached.journey;
   journey = await ensurePricedJourneyWithProfileGate(client, profileName, journey, body);
-  const originalMoney = bestMoney(journey);
-  if (originalMoney.price === null || originalMoney.partialFare) {
+  const originalMoney = bestMoney(journey, {firstClass: Boolean(body.first_class)});
+  if (originalMoney.price === null || originalMoney.partialFare || originalMoney.eligibilityKnown !== true) {
     return {
       status: 'unavailable',
       method: 'db-vendo-direct-two-ticket',
@@ -1341,34 +1420,18 @@ async function splitAnalyze(body) {
   const maxPoints = Math.min(Math.max(Number(body.max_split_points || 4), 1), 10);
   const points = selectSplitPoints(allPoints, maxPoints);
   const diagnostics = [];
-  const started = Date.now();
 
-  let results;
-  try {
-    results = await withTimeout(mapWithConcurrency(points, 2, async (point) => {
-      if (Date.now() - started > SPLIT_TIMEOUT_MS) {
-        return {status: 'timeout', split_station: point.station};
-      }
-      try {
-        return await analyzeSplitPoint(client, profileName, point, journey, body);
-      } catch (error) {
-        return {status: 'failed', split_station: point.station, error: errorText(error)};
-      }
-    }), SPLIT_TIMEOUT_MS, 'complete split analysis');
-  } catch (error) {
-    return {
-      status: 'failed',
-      method: 'db-vendo-direct-two-ticket',
-      profile: profileName,
-      reason: errorText(error),
-      original_price: originalMoney.price,
-      currency: originalMoney.currency,
-      checked_split_points: points.length,
-      available_split_points: allPoints.length,
-      split_options: [],
-      diagnostics: [{status: 'timeout', error: errorText(error)}],
-    };
-  }
+  // A budget overrun now keeps whatever points already finished instead of discarding them: the
+  // old per-point deadline used the same SPLIT_TIMEOUT_MS as the overall race around it, so it
+  // could only trigger at the moment the overall race was already rejecting the whole response.
+  const rawResults = await mapWithConcurrencyBudget(points, 2, async (point) => {
+    try {
+      return await analyzeSplitPoint(client, profileName, point, journey, body);
+    } catch (error) {
+      return {status: 'failed', split_station: point.station, error: errorText(error)};
+    }
+  }, SPLIT_TIMEOUT_MS);
+  const results = rawResults.map((result, index) => result || {status: 'timeout', split_station: points[index].station});
 
   const splitOptions = [];
   for (const result of results) {
@@ -1700,7 +1763,9 @@ async function runSelfTests() {
       throw new Error(`self-test split price refresh escaped the dbnav gate: peak=${refreshPeak}`);
     }
     dbnavBlockedUntil = Date.now() + 5000;
-    const pricedSplit = {...unpricedSplit, price: {amount: 10, currency: 'EUR'}};
+    // A verified, ticketed price (not the bare journey.price fallback, which eligibilityKnown:false
+    // now correctly treats as needing a refresh - see the "self-test full fare preference" checks above).
+    const pricedSplit = {...unpricedSplit, tickets: [{name: 'Erwachsenenpreis', priceObj: {amount: 1000, currency: 'EUR'}, partialFare: false}]};
     if (await ensurePricedJourneyWithProfileGate(refreshClient, 'dbnav', pricedSplit, {}) !== pricedSplit) {
       throw new Error('self-test priced split should not need a dbnav slot');
     }
@@ -1810,12 +1875,190 @@ async function runSelfTests() {
     if (directed.departures.length !== 1 || directed.destination !== 'End' || directed.departures[0].product !== 'bus') {
       throw new Error('departure destination routing failed');
     }
+
+    // Issue: split analysis accepted the unverified journey.price fallback (no tickets array) as
+    // a usable "original" price, the same fare /search itself refuses to show.
+    clients.dbnav = makeClient('dbnav');
+    clients.db = makeClient('db');
+    const unverifiedLegs = [{
+      tripId: 'unverified-trip', line: {name: 'ICE 100', product: 'national'},
+      origin: {id: 'start', name: 'Start'}, destination: {id: 'end', name: 'End'},
+      plannedDeparture: '2030-08-15T06:00:00+02:00', plannedArrival: '2030-08-15T08:00:00+02:00', stopovers: [],
+    }];
+    const unverifiedToken = cacheJourney(
+      {refreshToken: 'unverified-refresh', price: {amount: 42, currency: 'EUR'}, legs: unverifiedLegs},
+      {profileName: 'dbnav', cffiSessionKey: null},
+    );
+    clients.dbnav = {
+      ...makeClient('dbnav'),
+      // A refresh that still comes back with no tickets - the price stays unverified even after
+      // the retry ensurePricedJourney performs.
+      refreshJourney: async () => ({journey: {refreshToken: 'unverified-refresh', price: {amount: 42, currency: 'EUR'}, legs: unverifiedLegs}}),
+    };
+    const unverifiedSplit = await splitAnalyze({analysis_token: unverifiedToken});
+    if (unverifiedSplit.status !== 'unavailable') {
+      throw new Error(`self-test unverified journey.price fallback was accepted by splitAnalyze: ${JSON.stringify(unverifiedSplit)}`);
+    }
+
+    // Issue: bestMoney always dropped first-class tickets, so a first_class:true request never
+    // got a price even when the upstream returned one.
+    const firstClassJourney = {
+      refreshToken: 'fc-refresh',
+      tickets: [{name: 'Erwachsenenpreis', priceObj: {amount: 8000, currency: 'EUR'}, firstClass: true, partialFare: false}],
+      legs: unverifiedLegs,
+    };
+    if (bestMoney(firstClassJourney, {firstClass: false}).price !== null) {
+      throw new Error('self-test a second-class request should not receive a first-class price');
+    }
+    if (bestMoney(firstClassJourney, {firstClass: true}).price !== 80) {
+      throw new Error(`self-test a first-class request did not receive its own price: ${JSON.stringify(bestMoney(firstClassJourney, {firstClass: true}))}`);
+    }
+
+    // Issue: departuresWithProfile(destination) cached every candidate journey for split
+    // analysis, even though it only ever reads legs[0] and discards the analysis token -
+    // filling the shared 200-entry cache with tokens nobody can redeem.
+    clients.dbnav = makeClient('dbnav');
+    const cacheSizeBeforeBoard = journeyCache.size;
+    await departuresWithProfile('dbnav', {station: 'Start', destination: 'End', when: boardWhen, duration_minutes: 90, limit: 8});
+    if (journeyCache.size !== cacheSizeBeforeBoard) {
+      throw new Error(`self-test departures-with-destination cached split tokens it never uses: ${journeyCache.size - cacheSizeBeforeBoard} new entries`);
+    }
+
+    // Issue: a refresh's OPS_BLOCKED inside an otherwise-successful search was wiped out right
+    // after, because the success path reset the circuit unconditionally.
+    clients.dbnav = {
+      ...makeClient('dbnav'),
+      refreshJourney: async () => { const blocked = new Error('OPS_BLOCKED'); blocked.code = 'OPS_BLOCKED'; throw blocked; },
+    };
+    clients.db = makeClient('db', {priceCents: 5499});
+    dbnavBlockedUntil = 0;
+    await searchJourneys({
+      origin: 'Start', destination: 'End', departure: '2030-08-15T06:00:00+02:00',
+      mode: 'all', results: 2, with_prices: true,
+    });
+    if (!dbnavCircuitOpen()) {
+      throw new Error('self-test a nested refresh OPS_BLOCKED was cleared by its own successful search');
+    }
+    dbnavBlockedUntil = 0;
+
+    // Issue: malformed input (bad timestamp) made four upstream location lookups and still came
+    // back 200 {status:'empty'} instead of a 400, indistinguishable from a real empty result.
+    calls.length = 0;
+    clients.dbnav = makeClient('dbnav');
+    clients.db = makeClient('db');
+    let rejectedMalformedSearch = false;
+    try {
+      await searchJourneys({origin: 'Start', destination: 'End', departure: 'not-a-timestamp'});
+    } catch (error) {
+      rejectedMalformedSearch = error instanceof HttpError && error.status === 400;
+    }
+    if (!rejectedMalformedSearch || calls.length !== 0) {
+      throw new Error(`self-test malformed search input should be rejected before any upstream call: rejected=${rejectedMalformedSearch} calls=${calls.length}`);
+    }
+
+    // Issue: a 404 "station not found" from one profile's own index aborted /departures
+    // entirely instead of falling through to the other profile, unlike /search.
+    clients.dbnav = {locations: async () => [], departures: async () => { throw new Error('dbnav should not be reached once its own station lookup failed'); }};
+    clients.db = {
+      locations: async (query) => [{type: 'station', id: query === 'Start' ? 'start' : 'end', name: query}],
+      departures: async () => ({departures: [boardRows[0]]}),
+    };
+    const departuresFallback = await searchDepartures({station: 'Start', when: boardWhen, duration_minutes: 90, limit: 8});
+    if (departuresFallback.source !== 'db' || !departuresFallback.departures.length) {
+      throw new Error(`self-test departures did not fall back past a 404 from one profile: ${JSON.stringify(departuresFallback)}`);
+    }
+
+    // Issue: OPS_BLOCKED on a non-2xx bridge status never opened the circuit, because the status
+    // check ran before the body was inspected.
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async () => ({
+        ok: true,
+        json: async () => ({status: 403, body: JSON.stringify({code: 'OPS_BLOCKED', status: 'OPS_BLOCKED'})}),
+      });
+      dbnavBlockedUntil = 0;
+      let opsBlockedOnNon2xx = false;
+      try {
+        await cffiDbnavRequest(
+          {profile: {transformReqBody: (_ctx, reqBody) => reqBody, transformReq: (_ctx, req) => req, defaultLanguage: 'de'}, opt: {}},
+          'self-test-agent',
+          {endpoint: 'https://example.invalid', path: '/test', method: 'GET'},
+        );
+      } catch (error) {
+        opsBlockedOnNon2xx = error?.code === 'OPS_BLOCKED' && dbnavCircuitOpen();
+      }
+      if (!opsBlockedOnNon2xx) throw new Error('self-test OPS_BLOCKED on a non-2xx bridge status did not open the circuit');
+    } finally {
+      globalThis.fetch = originalFetch;
+      dbnavBlockedUntil = 0;
+    }
+
+    // Issue: GET /locations bypassed the dbnav concurrency gate and circuit breaker entirely.
+    clients.dbnav = makeClient('dbnav');
+    dbnavBlockedUntil = Date.now() + 5000;
+    const blockedSuggestions = await suggestLocations('Start');
+    if (blockedSuggestions.attempts.find((attempt) => attempt.profile === 'dbnav')?.ok !== false) {
+      throw new Error('self-test /locations ignored the dbnav circuit breaker');
+    }
+    dbnavBlockedUntil = 0;
+
+    // mapWithConcurrencyBudget must keep results that finished before the budget and leave
+    // unfinished slots for the caller to fill as timeouts, instead of discarding everything the
+    // way the old shared-deadline withTimeout(mapWithConcurrency(...)) race did.
+    const budgetResults = await mapWithConcurrencyBudget([10, 10, 1000, 1000], 2, async (delay) => {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      return {status: 'ok', delay};
+    }, 150);
+    if (budgetResults[0]?.status !== 'ok' || budgetResults[1]?.status !== 'ok') {
+      throw new Error(`self-test mapWithConcurrencyBudget lost results that finished before the budget: ${JSON.stringify(budgetResults)}`);
+    }
+    if (budgetResults[2] !== undefined || budgetResults[3] !== undefined) {
+      throw new Error(`self-test mapWithConcurrencyBudget should leave points that outran the budget for the caller to mark as timeout: ${JSON.stringify(budgetResults)}`);
+    }
   } finally {
     clients.db = originalDb;
     clients.dbnav = originalDbnav;
   }
 
   console.log('db-api self-tests: OK (dbnav -> db, refresh prices, block circuit, curl_cffi session context)');
+}
+
+async function suggestLocations(query) {
+  if (!query || query.length < 2) throw new HttpError(400, 'q must contain at least two characters');
+  const lists = await Promise.allSettled(PROFILE_ORDER.map(async (profileName) => {
+    const client = clients[profileName];
+    const fetchItems = () => withTimeout(client.locations(query, {
+      results: 20, stops: true, addresses: false, poi: false, language: 'de',
+    }), REQUEST_TIMEOUT_MS, `${profileName} location suggestions`);
+    // Station autocomplete fires on every keystroke; without the dbnav gate it bypassed the
+    // concurrency limit and kept hitting dbnav during an open circuit, unlike every other
+    // dbnav call (search, departures, split pricing).
+    const items = profileName === 'dbnav' ? await withDbnavSlot(fetchItems) : await fetchItems();
+    return (Array.isArray(items) ? items : []).filter((item) =>
+      (item?.type === 'station' || item?.type === 'stop') && item.id
+    ).map((item) => ({
+      provider: 'db', provider_id: String(item.id), name: item.name || String(item.id),
+      latitude: item.location?.latitude ?? null, longitude: item.location?.longitude ?? null,
+      is_station: item.type === 'station',
+      products: item.products || {},
+      // DB products include nearby/related stops. They are not evidence of
+      // the transport mode at this exact stop; retain them separately.
+    }));
+  }));
+  const seen = new Set();
+  const locations = [];
+  for (const settled of lists) {
+    if (settled.status !== 'fulfilled') continue;
+    for (const item of settled.value) {
+      if (seen.has(item.provider_id)) continue;
+      seen.add(item.provider_id); locations.push(item);
+    }
+  }
+  return {
+    locations: locations.slice(0, 20),
+    status: lists.some((item) => item.status === 'fulfilled') ? 'ok' : 'failed',
+    attempts: lists.map((item, index) => ({profile: PROFILE_ORDER[index], ok: item.status === 'fulfilled'})),
+  };
 }
 
 const server = http.createServer(async (req, res) => {
@@ -1849,35 +2092,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && req.url.startsWith('/locations?')) {
       const query = new URL(req.url, 'http://localhost').searchParams.get('q')?.trim();
-      if (!query || query.length < 2) throw new HttpError(400, 'q must contain at least two characters');
-      const lists = await Promise.allSettled(PROFILE_ORDER.map(async (profileName) => {
-        const client = clients[profileName];
-        const items = await withTimeout(client.locations(query, {
-          results: 20, stops: true, addresses: false, poi: false, language: 'de',
-        }), REQUEST_TIMEOUT_MS, `${profileName} location suggestions`);
-        return (Array.isArray(items) ? items : []).filter((item) =>
-          (item?.type === 'station' || item?.type === 'stop') && item.id
-        ).map((item) => ({
-          provider: 'db', provider_id: String(item.id), name: item.name || String(item.id),
-          latitude: item.location?.latitude ?? null, longitude: item.location?.longitude ?? null,
-          is_station: item.type === 'station',
-          products: item.products || {},
-          // DB products include nearby/related stops. They are not evidence of
-          // the transport mode at this exact stop; retain them separately.
-        }));
-      }));
-      const seen = new Set();
-      const locations = [];
-      for (const settled of lists) {
-        if (settled.status !== 'fulfilled') continue;
-        for (const item of settled.value) {
-          if (seen.has(item.provider_id)) continue;
-          seen.add(item.provider_id); locations.push(item);
-        }
-      }
-      return send(res, 200, {locations: locations.slice(0, 20),
-        status: lists.some((item) => item.status === 'fulfilled') ? 'ok' : 'failed',
-        attempts: lists.map((item, index) => ({profile: PROFILE_ORDER[index], ok: item.status === 'fulfilled'}))});
+      return send(res, 200, await suggestLocations(query));
     }
     if (req.method === 'POST' && req.url === '/split') {
       const body = await readJson(req);
