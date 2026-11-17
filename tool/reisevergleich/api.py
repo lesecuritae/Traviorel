@@ -115,7 +115,8 @@ async def diagnostics() -> dict[str, Any]:
                 response = await client.get(f"{DB_API_URL}/health")
                 return {"ok": response.is_success, "http_status": response.status_code}
         except Exception as exc:
-            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            # Only the class: the message carries internal hostnames and this endpoint is unauthenticated.
+            return {"ok": False, "error": type(exc).__name__}
 
     async def probe_transitous() -> dict[str, Any]:
         try:
@@ -126,7 +127,7 @@ async def diagnostics() -> dict[str, Any]:
                 )
                 return {"ok": response.is_success, "http_status": response.status_code}
         except Exception as exc:
-            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            return {"ok": False, "error": type(exc).__name__}
 
     db, transitous, trvl, cache = await asyncio.gather(
         probe_db(), probe_transitous(), capability_report(), cache_health()

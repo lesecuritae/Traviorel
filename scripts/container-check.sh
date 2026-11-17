@@ -18,6 +18,13 @@ docker compose run --rm --no-deps \
       echo "--- $(basename "$f")"
       python "$f"
     done
+    # Viele Tests sind pytest-Funktionen und laufen als Skript gar nicht. Das Produktionsimage
+    # bringt pytest nicht mit: dann klar sagen, dass sie fehlen, statt still "OK" zu melden.
+    if python -c "import pytest" 2>/dev/null; then
+      cd /source && python -m pytest -q -p no:cacheprovider
+    else
+      echo "HINWEIS: pytest fehlt im Image; die pytest-Tests wurden NICHT ausgefuehrt (CI: python -m pytest -q)."
+    fi
     python - <<"PY"
 import reisevergleich.api, reisevergleich.service, reisevergleich.presentation
 print("Produktionsimporte: OK")
