@@ -350,7 +350,7 @@ docker compose build
 docker compose up -d
 ```
 
-trvl is pinned through `TRVL_REF` and `TRVL_COMMIT` to reviewed upstream commit `b20e2265a63a4d229abff7b20f5649f2e9f948dc`. This is an unreleased snapshot after v1.27.0, identified as `1.27.0+git.b20e226` through `TRVL_VERSION`. Change the reference, expected commit and version together after review. A mismatched commit fails the build. The Go 1.27.3 builder is digest-pinned; selected upstream tests run without network access during the full build. The Lite image still excludes trvl.
+trvl is pinned to release `v1.28.5` and commit `79d8ad49a3bf9bee1ad75890bc15a89feba9ebca`. Change `TRVL_REF`, `TRVL_COMMIT`, and `TRVL_VERSION` together. The build uses a digest-pinned Go 1.27.4 image and runs selected upstream tests offline. The standard image disables trvl telemetry and automatic update checks. The Lite image excludes trvl.
 
 ## Unambiguous station selection
 
@@ -456,7 +456,7 @@ trademarks and names.
 Traviorel code originating from this repository is available under the
 [MIT License](LICENSE).
 
-Third parties retain their own licences. Of particular importance is `trvl v1.24.0`,
+Third parties retain their own licences. Of particular importance is `trvl v1.28.5`,
 which is licensed under the **PolyForm Noncommercial License 1.0.0**. Traviorel's MIT
 licence does not override trvl's non-commercial restriction. Anyone wishing to use the
 complete default stack commercially must review trvl's licence terms separately.

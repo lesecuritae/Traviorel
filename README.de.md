@@ -373,7 +373,7 @@ docker compose build
 docker compose up -d
 ```
 
-trvl ist über `TRVL_REF` und `TRVL_COMMIT` auf den geprüften Upstream-Commit `b20e2265a63a4d229abff7b20f5649f2e9f948dc` gepinnt. Das ist ein noch unveröffentlichter Stand nach v1.27.0; die Binary-Version lautet deshalb `1.27.0+git.b20e226`. `TRVL_VERSION` setzt diese Kennzeichnung. Referenz, Commit und Versionskennung nur gemeinsam nach Prüfung ändern. Der Build verweigert einen abweichenden Commit und verwendet das per Digest festgelegte Go 1.27.3. Die ausgewählten Upstream-Tests laufen beim vollständigen Build ohne Netzwerk; das Lite-Image enthält weiterhin kein trvl.
+trvl ist auf Release `v1.28.5` und Commit `79d8ad49a3bf9bee1ad75890bc15a89feba9ebca` gepinnt. `TRVL_REF`, `TRVL_COMMIT` und `TRVL_VERSION` gemeinsam ändern. Der Build verwendet Go 1.27.4 per Digest und führt ausgewählte Upstream-Tests ohne Netzwerk aus. Im Standardimage sind trvl-Telemetrie und der automatische Update-Check deaktiviert. Das Lite-Image enthält kein trvl.
 
 ## Eindeutige Stationsauswahl
 
@@ -462,7 +462,7 @@ Traviorel ist unabhängig von Deutsche Bahn, BetterBahn, Flix, trvl, Transitous 
 
 Der von diesem Repository stammende Traviorel-Code steht unter der [MIT License](LICENSE).
 
-Drittanbieter behalten ihre eigenen Lizenzen. Besonders wichtig ist `trvl v1.24.0`: Diese Abhängigkeit steht unter der **PolyForm Noncommercial License 1.0.0**. Die MIT-Lizenz von Traviorel hebt die nichtkommerzielle Einschränkung von trvl nicht auf. Wer den kompletten Standard-Stack kommerziell einsetzen möchte, muss die Lizenzbedingungen von trvl separat klären.
+Drittanbieter behalten ihre eigenen Lizenzen. Besonders wichtig ist `trvl v1.28.5`: Diese Abhängigkeit steht unter der **PolyForm Noncommercial License 1.0.0**. Die MIT-Lizenz von Traviorel hebt die nichtkommerzielle Einschränkung von trvl nicht auf. Wer den kompletten Standard-Stack kommerziell einsetzen möchte, muss die Lizenzbedingungen von trvl separat klären.
 
 Details stehen in [THIRD_PARTY.md](THIRD_PARTY.md).
 

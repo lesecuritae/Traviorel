@@ -6,9 +6,9 @@ services:
     build:
       context: ./tool
       args:
-        TRVL_REF: ${TRVL_REF:-b20e2265a63a4d229abff7b20f5649f2e9f948dc}
-        TRVL_COMMIT: ${TRVL_COMMIT:-b20e2265a63a4d229abff7b20f5649f2e9f948dc}
-        TRVL_VERSION: ${TRVL_VERSION:-1.27.0+git.b20e226}
+        TRVL_REF: ${TRVL_REF:-v1.28.5}
+        TRVL_COMMIT: ${TRVL_COMMIT:-79d8ad49a3bf9bee1ad75890bc15a89feba9ebca}
+        TRVL_VERSION: ${TRVL_VERSION:-1.28.5}
         WITH_TRVL: ${WITH_TRVL:-1}
     command: ["python", "/app/init_db_cffi_token.py"]
     user: "0:0"
@@ -55,9 +55,9 @@ services:
     build:
       context: ./tool
       args:
-        TRVL_REF: ${TRVL_REF:-b20e2265a63a4d229abff7b20f5649f2e9f948dc}
-        TRVL_COMMIT: ${TRVL_COMMIT:-b20e2265a63a4d229abff7b20f5649f2e9f948dc}
-        TRVL_VERSION: ${TRVL_VERSION:-1.27.0+git.b20e226}
+        TRVL_REF: ${TRVL_REF:-v1.28.5}
+        TRVL_COMMIT: ${TRVL_COMMIT:-79d8ad49a3bf9bee1ad75890bc15a89feba9ebca}
+        TRVL_VERSION: ${TRVL_VERSION:-1.28.5}
         WITH_TRVL: ${WITH_TRVL:-1}
     container_name: traviorel-app
     depends_on:

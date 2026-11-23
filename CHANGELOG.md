@@ -1,4 +1,8 @@
 # Changelog
+
+## Unreleased
+
+- trvl auf v1.28.5 mit überprüftem Commit und Go 1.27.4 aktualisiert. Telemetrie und automatischer Update-Check sind im Laufzeitimage deaktiviert.
 ## 0.3.7 - 2026-11-17
 
 - Kernvergleichs-/Darstellungs-/MCP-Logik: FlixBus/-Train ignorierten eigene Filter (`flix_options` kam aus der ungefilterten Rohliste); „günstigster Live-Preis" war nicht der günstigste, sondern der nach Präferenz best-rangierte; ein Flug ohne exakt passenden Flughafencode wurde aus der öffentlichen Antwort entfernt, während sein Preis in der Summe blieb; `missing_fields` ging bei Rundreisen/Reiseplänen verloren; Fremdwährungspreise wurden als Euro angezeigt; Hotel-Nachtpreise wurden als Gesamtpreis für den Aufenthalt bezeichnet; ein fehlgeschlagener optionaler Zusatzabruf (Hotel/Transfer/Feeder/Flix-Anreicherung) konnte die ganze Anfrage abbrechen statt nur diese eine Komponente als fehlend zu melden; fehlende Echtzeitdaten an einem Fahrtende wurden als „pünktlich" ausgegeben; das Deutschlandticket ignorierte eine über `find_station` gewählte konkrete Haltestelle und suchte stattdessen per Freitext; `prefer`/`limit` wirkten nur auf das bereits zurückgekommene Ergebnis, nicht auf die eigentliche Auswahl im Backend.

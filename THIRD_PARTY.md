@@ -25,7 +25,7 @@ Traviorel lädt die beiden großen Transportbibliotheken beim Container-Build au
 ## trvl
 
 - Projekt: [MikkoParkkola/trvl](https://github.com/MikkoParkkola/trvl)
-- Build-Pin: geprüfter Upstream-Commit `b20e2265a63a4d229abff7b20f5649f2e9f948dc` nach v1.27.0 (Binary-Version `1.27.0+git.b20e226`, kein neuer Upstream-Release)
+- Build-Pin: Tag `v1.28.5`, geprüfter Upstream-Commit `79d8ad49a3bf9bee1ad75890bc15a89feba9ebca`
 - Lizenz: **PolyForm Noncommercial License 1.0.0** (<https://polyformproject.org/licenses/noncommercial/1.0.0/>)
 - Required Notice: `Copyright (c) 2026 Mikko Parkkola (https://github.com/MikkoParkkola/trvl)`
 - Die Lizenz erlaubt nur die dort definierten nichtkommerziellen Zwecke. Für kommerzielle Nutzung ist eine separate Lizenz des trvl-Rechteinhabers erforderlich.

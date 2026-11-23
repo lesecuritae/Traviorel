@@ -1,12 +1,11 @@
 # Go läuft immer auf der Build-Maschine und baut für die Zielarchitektur: keine Emulation, kein 15-Minuten-arm64-Build.
-FROM --platform=$BUILDPLATFORM golang:1.27.3-bookworm@sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0 AS trvl-builder
+FROM --platform=$BUILDPLATFORM golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS trvl-builder
 ARG TARGETOS=linux
 ARG TARGETARCH
-ARG TRVL_REF=b20e2265a63a4d229abff7b20f5649f2e9f948dc
-ARG TRVL_VERSION=1.27.0+git.b20e226
+ARG TRVL_REF=v1.28.5
+ARG TRVL_VERSION=1.28.5
 # Tags are mutable; a tag or full commit must resolve to the reviewed commit.
-# The version suffix identifies this unreleased snapshot without inventing a release.
-ARG TRVL_COMMIT=b20e2265a63a4d229abff7b20f5649f2e9f948dc
+ARG TRVL_COMMIT=79d8ad49a3bf9bee1ad75890bc15a89feba9ebca
 # WITH_TRVL=0 baut ein Image ohne trvl (und ohne dessen Noncommercial-Lizenz); Traviorel läuft dann mit den Direktwegen.
 ARG WITH_TRVL=1
 RUN printf '%s' "$TRVL_REF" | grep -Eq '^(v[0-9]+\.[0-9]+\.[0-9]+|[0-9a-f]{40})$' \
@@ -31,8 +30,9 @@ RUN if [ "$WITH_TRVL" = "1" ]; then GOTOOLCHAIN=local go mod download; fi
 # Fake-browser tests still resolve example.com through the real safety guard.
 # This public-address fixture exists only in this network-disabled build step;
 # neither the runtime image nor the host DNS configuration receives it.
+# The hotel suite exercises retry backoffs and needs more than three minutes.
 RUN --network=none --mount=type=bind,source=trvl-test-hosts,target=/etc/hosts \
-    if [ "$WITH_TRVL" = "1" ]; then GOTOOLCHAIN=local GOMAXPROCS=2 GOMEMLIMIT=2GiB go test -p=1 -count=1 -timeout=180s ./internal/flights/afklm ./internal/flights ./internal/hotels ./internal/providers ./internal/ground; fi
+    if [ "$WITH_TRVL" = "1" ]; then GOTOOLCHAIN=local GOMAXPROCS=2 GOMEMLIMIT=2GiB go test -p=1 -count=1 -timeout=360s ./internal/flights/afklm ./internal/flights ./internal/hotels ./internal/providers ./internal/ground ./internal/telemetry; fi
 RUN --network=none if [ "$WITH_TRVL" = "1" ]; then export TRVL_NO_TELEMETRY=1 TRVL_DISABLE_UPDATE_CHECK=1; GOOS="${TARGETOS}" GOARCH="${TARGETARCH:-$(go env GOARCH)}" CGO_ENABLED=0 GOTOOLCHAIN=local go build -trimpath -ldflags "-s -w -X main.Version=${TRVL_VERSION}" -o /out/trvl ./cmd/trvl \
     && if [ "${TARGETARCH:-$(go env GOARCH)}" = "$(go env GOARCH)" ]; then /out/trvl version | grep -F "trvl ${TRVL_VERSION}" >/dev/null && /out/trvl hotels --help | grep -F -- "--enrich-rooms" >/dev/null && /out/trvl hotels --help | grep -F -- "--checkin" >/dev/null && /out/trvl flights --help | grep -F -- "--provider" >/dev/null && /out/trvl flights --help | grep -F -- "--return" >/dev/null && /out/trvl ground --help | grep -F -- "--provider" >/dev/null && /out/trvl airport-transfer --help | grep -F -- "--arrival-after" >/dev/null && /out/trvl route --help | grep -F -- "--arrive-by" >/dev/null; fi \
     && cp /tmp/TRVL_COMMIT /out/TRVL_COMMIT && echo "${TRVL_REF}" > /out/TRVL_REF; \
@@ -41,7 +41,9 @@ RUN --network=none if [ "$WITH_TRVL" = "1" ]; then export TRVL_NO_TELEMETRY=1 TR
 
 FROM python:3.13-slim-bookworm
 ARG WITH_TRVL=1
-ENV TRVL_ENABLED=${WITH_TRVL} \
+ENV TRVL_NO_TELEMETRY=1 \
+    TRVL_DISABLE_UPDATE_CHECK=1 \
+    TRVL_ENABLED=${WITH_TRVL} \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     HOME=/var/lib/reisevergleich
